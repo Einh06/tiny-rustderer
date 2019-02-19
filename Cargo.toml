@@ -1,0 +1,6 @@
+[package]
+name = "tiny-rustderer"
+version = "0.1.0"
+authors = ["Florian MOREL <m.morel.florian@gmail.com>"]
+
+[dependencies]
