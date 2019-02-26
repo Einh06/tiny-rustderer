@@ -34,8 +34,8 @@ impl RGB {
 
 #[derive(Debug)]
 pub struct Image {
-    width: usize,
-    height: usize,
+    pub width: usize,
+    pub height: usize,
     data: Vec<RGB>,
 }
 
@@ -54,7 +54,6 @@ impl Image {
 }
 
 impl From<&Image> for String {
-
     fn from(image: &Image) -> String {
         let mut buf = String::new();
         buf.push_str(format!("P3\n{} {}\n255\n", image.width, image.height).as_str());
