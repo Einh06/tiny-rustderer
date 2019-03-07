@@ -1,67 +1,23 @@
 //@TODO(Florian): OBJ loader incomplete
-use std::fs::{DirBuilder, File};
-use std::io::{Write, Read};
-use std::ops::{Add, Sub, Mul};
-use std::cmp::{min, max};
-
+extern crate stb_image;
+mod math;
 mod ppm;
 mod obj;
 
-#[derive(Clone, Copy)]
-struct Vec2 {
-    x: i32,
-    y: i32,
-}
+use std::fs::{DirBuilder, File};
+use std::io::{Write, Read};
 
-impl Vec2 {
-    fn new(x: i32, y: i32) -> Vec2{ 
-        Vec2 {x, y}
+use stb_image::image;
+
+use math::{Vec2i, Vec3f, Vec4f, Mat44};
+
+impl From<obj::Vec3> for Vec3f {
+    fn from(v: obj::Vec3) -> Vec3f {
+        Vec3f::new(v.x, v.y, v.z)
     }
 }
 
-impl Add<Vec2> for Vec2 {
-    type Output = Vec2;
-    fn add(self, v: Vec2) -> Vec2 {
-        Vec2::new( self.x + v.x, self.y + v.y )
-    }
-}
-
-impl Sub<Vec2> for Vec2 {
-    type Output = Vec2;
-    fn sub(self, v: Vec2) -> Vec2 {
-        Vec2::new(self.x - v.x, self.y - v.y)
-    }
-}
-
-impl Mul<f32> for Vec2 {
-    type Output = Vec2;
-    fn mul(self, s: f32) -> Vec2 {
-        Vec2::new(((self.x as f32) * s) as i32, ((self.y as f32) * s) as i32)
-    }
-}
-
-#[derive(Debug, Clone, Copy)]
-struct Vec3f {
-    x: f32,
-    y: f32,
-    z: f32,
-}
-
-impl Vec3f {
-
-    fn new(x: f32, y: f32, z: f32) -> Vec3f {
-        Vec3f {x,y,z}
-    }
-
-    fn cross(self, v: Vec3f) -> Vec3f {
-        Vec3f {
-            x: self.y * v.z - self.z * v.y,
-            y: self.z * v.x - self.x * v.z,
-            z: self.x * v.y - self.y * v.x,
-        }
-    }
-}
-
+#[allow(dead_code)]
 fn line(x0: i32, y0: i32, x1: i32, y1: i32, image: &mut ppm::Image, color: ppm::RGB) {
     let steep = (x0 - x1).abs() < (y0 - y1).abs();
     let (x0, x1, y0, y1) = if steep {(y0, y1, x0, x1) } else { (x0, x1, y0, y1) }; // SWAP
@@ -88,111 +44,98 @@ fn line(x0: i32, y0: i32, x1: i32, y1: i32, image: &mut ppm::Image, color: ppm::
     }
 }
 
-fn barycenter(t: &[Vec2; 3], p: Vec2) -> Vec3f {
-
+fn barycenter(t: &[Vec3f; 3], p: Vec2i) -> Vec3f {
     let v1 = Vec3f { 
-        x: (t[2].x - t[0].x) as f32,
-        y: (t[1].x - t[0].x) as f32,
-        z: (t[0].x - p.x) as f32,
+        x: (t[2].x - t[0].x),
+        y: (t[1].x - t[0].x),
+        z: (t[0].x - p.x as f32),
     };
 
     let v2 = Vec3f {
-        x: (t[2].y - t[0].y) as f32,
-        y: (t[1].y - t[0].y) as f32,
-        z: (t[0].y - p.y) as f32,
+        x: (t[2].y - t[0].y),
+        y: (t[1].y - t[0].y),
+        z: (t[0].y - p.y as f32),
     };
 
     let u = v1.cross(v2);
-    if u.z.abs() < 1_f32 { return Vec3f::new(-1_f32, 1_f32, 1_f32); }
-    Vec3f {x: 1_f32 - (u.x+u.y) / u.z, y: u.y / u.z, z: u.x / u.z }
+    if u.z.abs() < 1_f32 { Vec3f::new(-1_f32, 1_f32, 1_f32) }
+    else { Vec3f::new(1_f32 - (u.x+u.y) / u.z, u.y / u.z, u.x / u.z) }
 }
 
-fn triangle(t: &[Vec2; 3], image: &mut ppm::Image, color: ppm::RGB) {
+fn triangle(t: &[Vec3f; 3], vtuv: &[Vec3f; 3],  texture: &image::Image<u8>, intensity: f32, image: &mut ppm::Image,  z_buffer: &mut [f32]) {
+
     // Flat triangle, we don't care
     if t[0].y == t[1].y && t[0].y == t[2].y { return; }
     
+    let xmin = t[0].x.min(t[1].x.min(t[2].x));
+    let ymin = t[0].y.min(t[1].y.min(t[2].y));
+    let xmax = t[0].x.max(t[1].x.max(t[2].x));
+    let ymax = t[0].y.max(t[1].y.max(t[2].y));
 
-    let xmin = min(t[0].x, min(t[1].x, t[2].x));
-    let ymin = min(t[0].y, min(t[1].y, t[2].y));
-    let xmax = max(t[0].x, max(t[1].x, t[2].x));
-    let ymax = max(t[0].y, max(t[1].y, t[2].y));
+    let xmin = xmin.max(0_f32);
+    let xmax = xmax.min(image.width as f32 - 1_f32);
+    let ymin = ymin.max(0_f32);
+    let ymax = ymax.min(image.height as f32 - 1_f32);
 
-    let xmin = max(0, xmin);
-    let xmax = min(image.width as i32 - 1, xmax);
-    let ymin = max(0, ymin);
-    let ymax = min(image.height as i32 - 1, ymax);
+    let ixmin = xmin as i32;
+    let ixmax = xmax as i32;
+    let iymin = ymin as i32;
+    let iymax = ymax as i32;
 
-    /*
-    let (t0x, t0y) = (t0.x as f32, t0.y as f32);
-    let (t1x, t1y) = (t1.x as f32, t1.y as f32);
-    let (t2x, t2y) = (t2.x as f32, t2.y as f32);
-    let inv_det = 1_f32 / ((t1y - t2y)*(t0x-t2x) + (t2x-t1x)*(t0y - t2y)).abs();
+    for y in iymin..iymax {
+        for x in ixmin..ixmax {
+            let xu = x as usize;
+            let yu = y as usize;
 
-    for y in ymin..ymax {
-        for x in xmin..xmax {
+            let v = barycenter(t, Vec2i {x,y});
+            if v.x < 0_f32 || v.y < 0_f32 || v.z < 0_f32 { continue }
 
-            let fx = x as f32;
-            let fy = y as f32;
+            let mut z = 0_f32;
+            for i in 0..3 { z += t[i].z * v[i]; }
+            let mut zb = &mut z_buffer[(yu*WIDTH)+xu];
 
-            let l1 = (((t1y - t2y)*(fx - t2x)) + ((t2x - t1x)*(fy - t2y))) * inv_det;
-            let l2 = (((t2y - t0y)*(fx - t2x)) + ((t0x - t2x)*(fy - t2y))) * inv_det;
-            let l3 = 1_f32 - l1 - l2;
+            if *zb < z { 
+                *zb = z;
 
-            if (l1 + l2 + l3) - 1_f32 < EPS {
-                image.set(x as usize, y as usize, color);
+                let vtx = v.x * vtuv[0].x + v.y * vtuv[1].x + v.z * vtuv[2].x;
+                let vty = v.x * vtuv[0].y + v.y * vtuv[1].y + v.z * vtuv[2].y;
+
+                let u = (vtx * (image.width as f32)) as usize;
+                let v = (image.height - 1) - (vty * (image.height as f32)) as usize; //flipped vertically
+
+                let r = texture.data[((v * image.width + u) * 3) + 0];
+                let g = texture.data[((v * image.width + u) * 3) + 1];
+                let b = texture.data[((v * image.width + u) * 3) + 2];
+
+                let r = (r as f32 * intensity) as u8;
+                let g = (g as f32 * intensity) as u8;
+                let b = (b as f32 * intensity) as u8;
+
+                image.set(x as usize, y as usize, ppm::RGB::new(r, g, b));
             }
         }
     }
-    */
-    for y in ymin..ymax {
-        for x in xmin..xmax {
-            let v = barycenter(t, Vec2 {x,y});
-            if v.x < 0_f32 || v.y < 0_f32 || v.z < 0_f32 { continue }
-            image.set(x as usize, y as usize, color);
-        }
-    }
-    
-    /*
-    // order vertices by ascending y
-    let (t0, t1) = if t0.y > t1.y {(t1, t0)} else {(t0, t1)};
-    let (t0, t2) = if t0.y > t2.y {(t2, t0)} else {(t0, t2)};
-    let (t1, t2) = if t1.y > t2.y {(t2, t1)} else {(t1, t2)};
-    for y in t0.y..t1.y {
-        let segment_height = t1.y-t0.y+1;
-        let alpha = (y - t0.y) as f32 / total_height as f32;
-        let beta = (y - t0.y) as f32 / segment_height as f32;
-
-        let A = t0 + (t2 - t0) * alpha;
-        let B = t0 + (t1 - t0) * beta;
-        let (A, B) = if A.x > B.x {(B,A)} else {(A,B)};
-        for x in A.x..B.x {
-            image.set(x as usize, y as usize, color);
-        }
-    }
-    for y in t1.y..t2.y {
-        let segment_height = t2.y-t1.y+1;
-        let alpha = (y - t0.y) as f32 / total_height as f32;
-        let beta = (y - t1.y) as f32 / segment_height as f32;
-
-        let A = t0 + (t2 - t0) * alpha;
-        let B = t1 + (t2 - t1) * beta;
-        let (A, B) = if A.x > B.x {(B,A)} else {(A,B)};
-        for x in A.x..B.x {
-            image.set(x as usize, y as usize, color);
-        }
-    }
-    */
 }
 
+fn render_mesh(filename: &str, texture_name: &str, image: &mut ppm::Image, z_buffer: &mut [f32]) -> std::io::Result<()> {
 
-fn render_mesh(filename: &str, image: &mut ppm::Image) -> std::io::Result<()> {
-
-    let fwidth = (image.width - 1) as f32;
-    let fheight = (image.height - 1) as f32;
+    let fwidth = WIDTH as f32;
+    let fheight = HEIGHT as f32;
 
     let mut resource_dir = std::env::current_dir().unwrap();
     resource_dir.push("rsrc");
+    let mut texture_path = resource_dir.clone();
+
     resource_dir.push(filename);
+    texture_path.push(texture_name);
+
+    let texture: image::Image<u8>;
+    use image::LoadResult::{Error, ImageU8, ImageF32};
+    match image::load(texture_path.as_path()) {
+        Error(str) => panic!(str),
+        ImageU8(image) => texture = image,
+        ImageF32(_image) => panic!("Wrong image format"),
+    };
 
     println!("Opening model file");
     let mut file = File::open(resource_dir.as_path())?;
@@ -202,46 +145,58 @@ fn render_mesh(filename: &str, image: &mut ppm::Image) -> std::io::Result<()> {
     println!("loading mesh content");
     let mesh = obj::Mesh::load(&content[..]);
 
+    let projection = Mat44::projection(Vec3f::new(0.0, 0.0, 3.0));
+    let viewport = Mat44::viewport(fwidth / 8.0, fheight / 8.0, (fwidth * 3.0) / 4.0, (fheight * 3.0) / 4.0, 255.0);
+
+    let pre_mult_mat = viewport * projection;
+
     for chunk in mesh.faces.chunks(3) {
-        let (i1, _, _) = chunk[0];
-        let (i2, _, _) = chunk[1];
-        let (i3, _, _) = chunk[2];
+        let (i1, t1, _) = chunk[0];
+        let (i2, t2, _) = chunk[1];
+        let (i3, t3, _) = chunk[2];
 
-        let v1: obj::Vec3 = mesh.vertices[i1 as usize];
-        let v2: obj::Vec3 = mesh.vertices[i2 as usize];
-        let v3: obj::Vec3 = mesh.vertices[i3 as usize];
+        let v1 = Vec3f::from(mesh.vertices[i1 as usize]);
+        let v2 = Vec3f::from(mesh.vertices[i2 as usize]);
+        let v3 = Vec3f::from(mesh.vertices[i3 as usize]);
 
-        let v1 = obj::Vec3::new( (v1.x + 1_f32) / 2_f32, (v1.y + 1_f32) / 2_f32, (v1.z + 1_f32) / 2_f32 );
-        let v2 = obj::Vec3::new( (v2.x + 1_f32) / 2_f32, (v2.y + 1_f32) / 2_f32 ,(v1.z + 1_f32) / 2_f32 );
-        let v3 = obj::Vec3::new( (v3.x + 1_f32) / 2_f32, (v3.y + 1_f32) / 2_f32 ,(v1.z + 1_f32) / 2_f32 );
-        
-        let (x1, y1) = ( (fwidth * v1.x) as i32, (fheight * v1.y) as i32);
-        let (x2, y2) = ( (fwidth * v2.x) as i32, (fheight * v2.y) as i32);
-        let (x3, y3) = ( (fwidth * v3.x) as i32, (fheight * v3.y) as i32);
+        let uv1 = Vec3f::from(mesh.texcoord[t1 as usize]);
+        let uv2 = Vec3f::from(mesh.texcoord[t2 as usize]);
+        let uv3 = Vec3f::from(mesh.texcoord[t3 as usize]);
 
-        let t: [Vec2; 3] = [Vec2::new(x1,y1), Vec2::new(x2, y2), Vec2::new(x3, y3)];
-        triangle(&t, image, ppm::RGB::white());
+        let sv1 = Vec3f::from(pre_mult_mat * Vec4f::from(v1));
+        let sv2 = Vec3f::from(pre_mult_mat * Vec4f::from(v2));
+        let sv3 = Vec3f::from(pre_mult_mat * Vec4f::from(v3));
+
+        let n = (v3 - v1).cross(v2 - v1).normalized();
+        let dot = n.dot(Vec3f::new(0_f32, 0_f32, -1_f32));
+
+        if dot > 0_f32 {
+            let t: [Vec3f; 3] = [sv1, sv2, sv3];
+            let uv: [Vec3f; 3] = [uv1, uv2, uv3];
+            triangle(&t, &uv, &texture, dot, image, z_buffer);
+        }
     }
     
     Ok(())
 }
 
+const WIDTH: usize = 1024;
+const HEIGHT: usize = 1024;
+
 fn main() -> std::io::Result<()> {
 
-    let width = 200;
-    let height = 200;
-
-    let mut image = ppm::Image::new(width, height);
+    let mut z_buffer: [f32; WIDTH * HEIGHT] = [std::f32::MIN; WIDTH * HEIGHT];
+    let mut image = ppm::Image::new(WIDTH, HEIGHT);
 
     {
-        render_mesh("african_head.obj", &mut image)?;
+        render_mesh("african_head.obj", "african_head_diffuse.tga", &mut image, &mut z_buffer)?;
     }
    
     /*
     {
-        let t0 = [Vec2::new(10, 70), Vec2::new(50, 160), Vec2::new(70, 80)];
-        let t1 = [Vec2::new(180, 50), Vec2::new(150, 1), Vec2::new(70, 180)];
-        let t2 = [Vec2::new(180, 150), Vec2::new(120, 160), Vec2::new(130, 180)];
+        let t0 = [Vec2i::new(10, 70), Vec2i::new(50, 160), Vec2i::new(70, 80)];
+        let t1 = [Vec2i::new(180, 50), Vec2i::new(150, 1), Vec2i::new(70, 180)];
+        let t2 = [Vec2i::new(180, 150), Vec2i::new(120, 160), Vec2i::new(130, 180)];
 
 
         triangle(&t0, &mut image, ppm::RGB::red());

@@ -6,6 +6,7 @@ pub struct Vec3 {
 }
 
 impl Vec3 { 
+    #[allow(dead_code)]
     pub fn new(x: f32, y: f32, z: f32) -> Vec3 {
         Vec3{ x, y, z }
     }
