@@ -90,11 +90,11 @@ impl Vec3f {
     }
 
     pub fn length(self) -> f32 {
-        self.dot(self)
+        (self.x * self.x + self.y * self.y + self.z * self.z).sqrt()
     }
 
     pub fn dot(self, v: Vec3f) -> f32 {
-        (self.x * v.x + self.y * v.y + self.z * v.z).sqrt()
+        self.x * v.x + self.y * v.y + self.z * v.z
     }
 
     pub fn cross(self, v: Vec3f) -> Vec3f {
@@ -151,11 +151,11 @@ impl Vec4f {
     }
 
     pub fn length(self) -> f32 {
-        self.dot(self)
+        self.dot(self).sqrt()
     }
 
     pub fn dot(self, v: Vec4f) -> f32 {
-        (self.x * v.x + self.y * v.y + self.z * v.z + self.w * v.w).sqrt()
+        (self.x * v.x + self.y * v.y + self.z * v.z + self.w * v.w)
     }
     
     pub fn normalized(self) -> Vec4f { 
@@ -228,15 +228,14 @@ impl Mat44 {
     }
 
     pub fn projection(camera: Vec3f) -> Mat44 {
-        Mat44 {m: [[1_f32, 0_f32, 0_f32, 0_f32], 
-                   [0_f32, 1_f32, 0_f32, 0_f32], 
-                   [0_f32, 0_f32, 1_f32, 0_f32], 
-                   [0_f32, 0_f32, -1_f32 / camera.z, 1_f32]] }
-
+        let mut m = Mat44::identity();
+        m.m[3][2] = -1.00 / camera.z;
+        m
     }
 
     pub fn viewport(x: f32, y: f32, w: f32, h: f32, depth: f32) -> Mat44 {
         let mut m = Mat44::identity();
+
         m.m[0][3] = x+w/2.0;
         m.m[1][3] = y+h/2.0;
         m.m[2][3] = depth/2.0;
@@ -244,6 +243,7 @@ impl Mat44 {
         m.m[0][0] = w/2.0;
         m.m[1][1] = h/2.0;
         m.m[2][2] = depth/2.0;
+
         m
     }
 }

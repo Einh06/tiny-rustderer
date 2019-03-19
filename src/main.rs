@@ -1,4 +1,3 @@
-//@TODO(Florian): OBJ loader incomplete
 extern crate stb_image;
 mod math;
 mod ppm;
@@ -6,10 +5,13 @@ mod obj;
 
 use std::fs::{DirBuilder, File};
 use std::io::{Write, Read};
-
 use stb_image::image;
+use math::{Vec3f, Vec4f, Mat44};
 
-use math::{Vec2i, Vec3f, Vec4f, Mat44};
+const WIDTH: usize = 1024;
+const HEIGHT: usize = 1024;
+const FWIDTH: f32 = WIDTH as f32;
+const FHEIGHT: f32 = HEIGHT as f32;
 
 impl From<obj::Vec3> for Vec3f {
     fn from(v: obj::Vec3) -> Vec3f {
@@ -44,17 +46,17 @@ fn line(x0: i32, y0: i32, x1: i32, y1: i32, image: &mut ppm::Image, color: ppm::
     }
 }
 
-fn barycenter(t: &[Vec3f; 3], p: Vec2i) -> Vec3f {
+fn barycenter(t: &[Vec3f; 3], p: Vec3f) -> Vec3f {
     let v1 = Vec3f { 
         x: (t[2].x - t[0].x),
         y: (t[1].x - t[0].x),
-        z: (t[0].x - p.x as f32),
+        z: (t[0].x - p.x),
     };
 
     let v2 = Vec3f {
         x: (t[2].y - t[0].y),
         y: (t[1].y - t[0].y),
-        z: (t[0].y - p.y as f32),
+        z: (t[0].y - p.y),
     };
 
     let u = v1.cross(v2);
@@ -62,50 +64,51 @@ fn barycenter(t: &[Vec3f; 3], p: Vec2i) -> Vec3f {
     else { Vec3f::new(1_f32 - (u.x+u.y) / u.z, u.y / u.z, u.x / u.z) }
 }
 
-fn triangle(t: &[Vec3f; 3], vtuv: &[Vec3f; 3],  texture: &image::Image<u8>, intensity: f32, image: &mut ppm::Image,  z_buffer: &mut [f32]) {
-
-    // Flat triangle, we don't care
-    if t[0].y == t[1].y && t[0].y == t[2].y { return; }
+fn triangle(t: &[Vec3f; 3], uv: &[Vec3f; 3],  texture: &image::Image<u8>, intensity: f32, image: &mut ppm::Image,  z_buffer: &mut [f32]) {
     
     let xmin = t[0].x.min(t[1].x.min(t[2].x));
     let ymin = t[0].y.min(t[1].y.min(t[2].y));
     let xmax = t[0].x.max(t[1].x.max(t[2].x));
     let ymax = t[0].y.max(t[1].y.max(t[2].y));
 
-    let xmin = xmin.max(0_f32);
-    let xmax = xmax.min(image.width as f32 - 1_f32);
+    //Clamping
+    let xmin = xmin.max(0_f32); 
+    let xmax = xmax.min(FWIDTH - 1_f32);
     let ymin = ymin.max(0_f32);
-    let ymax = ymax.min(image.height as f32 - 1_f32);
+    let ymax = ymax.min(FHEIGHT - 1_f32);
 
     let ixmin = xmin as i32;
     let ixmax = xmax as i32;
     let iymin = ymin as i32;
     let iymax = ymax as i32;
 
-    for y in iymin..iymax {
-        for x in ixmin..ixmax {
+    println!("triangle: {:?}", t);
+    for y in iymin..=iymax {
+        for x in ixmin..=ixmax {
             let xu = x as usize;
             let yu = y as usize;
 
-            let v = barycenter(t, Vec2i {x,y});
-            if v.x < 0_f32 || v.y < 0_f32 || v.z < 0_f32 { continue }
+            let mut p = Vec3f::new(x as f32, y as f32, 0.0);
 
-            let mut z = 0_f32;
-            for i in 0..3 { z += t[i].z * v[i]; }
+            let bar = barycenter(t, p);
+            println!("  point {:?}, barycenter {:?}, ", p, bar);
+            if bar.x < 0_f32 || bar.y < 0_f32 || bar.z < 0_f32 { continue }
+
+            p.z = t[0].z * bar.x + t[1].z * bar.y + t[2].z * bar.z;
             let mut zb = &mut z_buffer[(yu*WIDTH)+xu];
 
-            if *zb < z { 
-                *zb = z;
+            if *zb < p.z { 
+                *zb = p.z;
 
-                let vtx = v.x * vtuv[0].x + v.y * vtuv[1].x + v.z * vtuv[2].x;
-                let vty = v.x * vtuv[0].y + v.y * vtuv[1].y + v.z * vtuv[2].y;
+                let vtx = bar.x * uv[0].x + bar.y * uv[1].x + bar.z * uv[2].x;
+                let vty = bar.x * uv[0].y + bar.y * uv[1].y + bar.z * uv[2].y;
 
-                let u = (vtx * (image.width as f32)) as usize;
-                let v = (image.height - 1) - (vty * (image.height as f32)) as usize; //flipped vertically
+                let u = (vtx * FWIDTH) as usize;
+                let v = (image.height - 1) - (vty * FHEIGHT) as usize; //flipped vertically
 
-                let r = texture.data[((v * image.width + u) * 3) + 0];
-                let g = texture.data[((v * image.width + u) * 3) + 1];
-                let b = texture.data[((v * image.width + u) * 3) + 2];
+                let r = texture.data[((v * image.width + u) * 3) + 0]; // RGB
+                let g = texture.data[((v * image.width + u) * 3) + 1]; // RGB
+                let b = texture.data[((v * image.width + u) * 3) + 2]; // RGB
 
                 let r = (r as f32 * intensity) as u8;
                 let g = (g as f32 * intensity) as u8;
@@ -118,10 +121,6 @@ fn triangle(t: &[Vec3f; 3], vtuv: &[Vec3f; 3],  texture: &image::Image<u8>, inte
 }
 
 fn render_mesh(filename: &str, texture_name: &str, image: &mut ppm::Image, z_buffer: &mut [f32]) -> std::io::Result<()> {
-
-    let fwidth = WIDTH as f32;
-    let fheight = HEIGHT as f32;
-
     let mut resource_dir = std::env::current_dir().unwrap();
     resource_dir.push("rsrc");
     let mut texture_path = resource_dir.clone();
@@ -146,7 +145,7 @@ fn render_mesh(filename: &str, texture_name: &str, image: &mut ppm::Image, z_buf
     let mesh = obj::Mesh::load(&content[..]);
 
     let projection = Mat44::projection(Vec3f::new(0.0, 0.0, 3.0));
-    let viewport = Mat44::viewport(fwidth / 8.0, fheight / 8.0, (fwidth * 3.0) / 4.0, (fheight * 3.0) / 4.0, 255.0);
+    let viewport = Mat44::viewport(FWIDTH / 8.0, FHEIGHT / 8.0, (FWIDTH * 3.0) / 4.0, (FHEIGHT * 3.0) / 4.0, 255.0);
 
     let pre_mult_mat = viewport * projection;
 
@@ -179,9 +178,6 @@ fn render_mesh(filename: &str, texture_name: &str, image: &mut ppm::Image, z_buf
     
     Ok(())
 }
-
-const WIDTH: usize = 1024;
-const HEIGHT: usize = 1024;
 
 fn main() -> std::io::Result<()> {
 
