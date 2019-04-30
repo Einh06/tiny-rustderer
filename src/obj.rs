@@ -16,7 +16,7 @@ pub struct Mesh {
     pub vertices: Vec<Vec3>,
     pub texcoord: Vec<Vec3>,
     pub normals: Vec<Vec3>,
-    pub faces: Vec<(i64, i64, i64)>,
+    pub faces: Vec<(usize, usize, usize)>,
 }
 
 impl Mesh {
@@ -53,9 +53,9 @@ impl Mesh {
             },
             "f" => {
 
-                let f1:Vec<i64> = comp[1].split('/').map(|s| s.parse::<i64>().unwrap() ).collect();
-                let f2:Vec<i64> = comp[2].split('/').map(|s| s.parse::<i64>().unwrap() ).collect();
-                let f3:Vec<i64> = comp[3].split('/').map(|s| s.parse::<i64>().unwrap() ).collect();
+                let f1:Vec<usize> = comp[1].split('/').map(|s| s.parse::<usize>().unwrap() ).collect();
+                let f2:Vec<usize> = comp[2].split('/').map(|s| s.parse::<usize>().unwrap() ).collect();
+                let f3:Vec<usize> = comp[3].split('/').map(|s| s.parse::<usize>().unwrap() ).collect();
 
                 faces.push((f1[0] - 1, f1[1] - 1, f1[2] - 1));
                 faces.push((f2[0] - 1, f2[1] - 1, f2[2] - 1));

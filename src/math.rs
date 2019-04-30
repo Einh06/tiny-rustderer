@@ -1,4 +1,4 @@
-use std::ops::{Add, Sub, Mul, Index};
+use std::ops::{Add, Sub, Mul, Neg, Index, IndexMut};
 
 #[derive(Clone, Copy, Default)]
 pub struct Vec2i {
@@ -118,6 +118,20 @@ impl Sub<Vec3f> for Vec3f {
     }
 }
 
+impl Neg for Vec3f {
+    type Output = Vec3f;
+    fn neg(self) -> Vec3f {
+        Vec3f::new(-self.x, -self.y, -self.z)
+    }
+}
+
+impl Mul<f32> for Vec3f {
+    type Output = Vec3f;
+    fn mul(self, s: f32) -> Vec3f {
+        Vec3f::new(self.x * s, self.y * s, self.z * s)
+    }
+}
+
 impl Index<usize> for Vec3f {
     type Output = f32;
     fn index(&self, c: usize) -> &f32 {
@@ -125,6 +139,16 @@ impl Index<usize> for Vec3f {
         0 => &self.x,
         1 => &self.y,
         2 => &self.z,
+        _ => panic!("{} is out of bound for Vec3f", c),
+        }
+    }
+}
+impl IndexMut<usize> for Vec3f {
+    fn index_mut(&mut self, c: usize) -> &mut f32 {
+        match c {
+        0 => &mut self.x,
+        1 => &mut self.y,
+        2 => &mut self.z,
         _ => panic!("{} is out of bound for Vec3f", c),
         }
     }
@@ -171,6 +195,13 @@ impl Sub<Vec4f> for Vec4f {
     }
 }
 
+impl Neg for Vec4f {
+    type Output = Vec4f;
+    fn neg(self) -> Vec4f {
+        Vec4f::new(-self.x, -self.y, -self.z, -self.w)
+    }
+}
+
 impl Index<usize> for Vec4f {
     type Output = f32;
     fn index(&self, c: usize) -> &f32 {
@@ -180,6 +211,18 @@ impl Index<usize> for Vec4f {
         2 => &self.z,
         3 => &self.w,
         _ => panic!("{} is out of bound for Vec4f", c),
+        }
+    }
+}
+
+impl IndexMut<usize> for Vec4f {
+    fn index_mut(&mut self, i: usize) -> &mut f32 {
+        match i {
+        0 => &mut self.x,
+        1 => &mut self.y,
+        2 => &mut self.z,
+        3 => &mut self.w,
+        _ => panic!("{} is out of bound for Vec4f", i),
         }
     }
 }
@@ -227,10 +270,26 @@ impl Mat44 {
         
     }
 
-    pub fn projection(camera: Vec3f) -> Mat44 {
+    pub fn projection(coef: f32) -> Mat44 {
         let mut m = Mat44::identity();
-        m.m[3][2] = -1.00 / camera.z;
+        m.m[3][2] = coef;
         m
+    }
+
+    pub fn lookat(eye: Vec3f, center: Vec3f, up: Vec3f) -> Mat44 {
+
+        let w = (eye - center).normalized();
+        let u = up.cross(w).normalized();
+        let v = w.cross(u).normalized();
+
+        let mut res = Mat44::identity();
+
+        res.m[0][0] = u.x; res.m[0][1] = u.y; res.m[0][2] = u.z;
+        res.m[1][0] = v.x; res.m[1][1] = v.y; res.m[1][2] = v.z;
+        res.m[2][0] = w.x; res.m[2][1] = w.y; res.m[2][2] = w.z;
+        res.m[0][3] = -u.dot(eye); res.m[1][3] = -v.dot(eye); res.m[2][3] = -w.dot(eye);
+        
+        res
     }
 
     pub fn viewport(x: f32, y: f32, w: f32, h: f32, depth: f32) -> Mat44 {
@@ -238,13 +297,65 @@ impl Mat44 {
 
         m.m[0][3] = x+w/2.0;
         m.m[1][3] = y+h/2.0;
-        m.m[2][3] = depth/2.0;
+        m.m[2][3] = depth/255.0;
 
         m.m[0][0] = w/2.0;
         m.m[1][1] = h/2.0;
-        m.m[2][2] = depth/2.0;
+        m.m[2][2] = depth/255.0;
 
         m
+    }
+
+    pub fn transposed(&self) -> Mat44 {
+        Mat44::new(self.m[0][0], self.m[1][0], self.m[2][0], self.m[3][0],
+                   self.m[0][1], self.m[1][1], self.m[2][1], self.m[3][1],
+                   self.m[0][2], self.m[1][2], self.m[2][2], self.m[3][2],
+                   self.m[0][3], self.m[1][3], self.m[2][3], self.m[3][3])
+    }
+
+    pub fn inverse(&self) -> Mat44 {
+
+        let m = &self.m;
+
+        let f0 = m[2][2] * m[3][3] - m[2][3] * m[3][2];
+        let f1 = m[2][1] * m[3][3] - m[2][3] * m[3][1];
+        let f2 = m[2][1] * m[3][2] - m[2][2] * m[3][1];
+        let f3 = m[1][2] * m[3][3] - m[1][3] * m[3][2];
+        let f4 = m[1][1] * m[3][3] - m[1][3] * m[3][1];
+        let f5 = m[1][1] * m[3][2] - m[1][2] * m[3][1];
+        let f6 = m[1][2] * m[2][3] - m[1][3] * m[2][2];
+        let f7 = m[1][1] * m[2][3] - m[1][3] * m[2][1];
+        let f8 = m[1][1] * m[2][2] - m[1][2] * m[2][1];
+        let f9 = m[2][0] * m[3][3] - m[2][3] * m[3][0];
+        let f10 = m[2][0] * m[3][2] - m[2][2] * m[3][0];
+        let f11 = m[1][0] * m[3][3] - m[1][3] * m[3][0];
+        let f12 = m[1][0] * m[3][2] - m[1][2] * m[3][0];
+        let f13 = m[1][0] * m[2][3] - m[1][3] * m[2][0];
+        let f14 = m[1][0] * m[2][2] - m[1][2] * m[2][0];
+        let f15 = m[2][0] * m[3][1] - m[2][1] * m[3][0];
+        let f16 = m[1][0] * m[3][1] - m[1][1] * m[3][0];
+        let f17 = m[1][0] * m[2][1] - m[1][1] * m[2][0];
+
+        let c0  =  m[1][1] * f0 - m[1][2] * f1  + m[1][3] * f2;
+        let c1  = -m[0][1] * f0 + m[0][2] * f1  - m[0][3] * f2;
+        let c2  =  m[0][1] * f3 - m[0][2] * f4  + m[0][3] * f5;
+        let c3  = -m[0][1] * f6 + m[0][2] * f7  - m[0][3] * f8;
+        let c4  = -m[1][0] * f0 + m[1][2] * f9  - m[1][3] * f10;
+        let c5  =  m[0][0] * f0 - m[0][2] * f9  + m[0][3] * f10;
+        let c6  = -m[0][0] * f3 + m[0][2] * f11 - m[0][3] * f12;
+        let c7  =  m[0][0] * f6 - m[0][2] * f13 + m[0][3] * f14;
+        let c8  =  m[1][0] * f1 - m[1][1] * f9  + m[1][3] * f15;
+        let c9  = -m[0][0] * f1 + m[0][1] * f9  - m[0][3] * f15;
+        let c10 =  m[0][0] * f4 - m[0][1] * f11 + m[0][3] * f16;
+        let c11 = -m[0][0] * f7 + m[0][1] * f13 - m[0][3] * f17;
+        let c12 = -m[1][0] * f2 + m[1][1] * f10 - m[1][2] * f15;
+        let c13 =  m[0][0] * f2 - m[0][1] * f10 + m[0][2] * f15;
+        let c14 = -m[0][0] * f5 + m[0][1] * f12 - m[0][2] * f16;
+        let c15 =  m[0][0] * f8 - m[0][1] * f14 + m[0][2] * f17;
+
+
+        let res = Mat44::new(c0, c1, c2, c3, c4, c5, c6, c7, c8, c9, c10, c11, c12, c13, c14, c15);
+        res * (m[0][0] * c0 + m[0][1] * c4 + m[0][2] * c8 + m[0][3] * c12)
     }
 }
 
@@ -257,10 +368,11 @@ impl Default for Mat44 {
 impl Mul<f32> for Mat44 {
     type Output = Mat44;
     fn mul(self, s: f32) -> Mat44 {
-        Mat44 {m: [[s,     0_f32, 0_f32, 0_f32], 
-                   [0_f32, s,     0_f32, 0_f32], 
-                   [0_f32, 0_f32, s,     0_f32], 
-                   [0_f32, 0_f32, 0_f32, s]] }
+        let m = &self.m;
+        Mat44::new(m[0][0] * s,m[0][1] * s,m[0][2] * s, m[0][3] * s,
+                   m[1][0] * s,m[1][1] * s,m[1][2] * s, m[1][3] * s,
+                   m[2][0] * s,m[2][1] * s,m[2][2] * s, m[2][3] * s,
+                   m[3][0] * s,m[3][1] * s,m[3][2] * s, m[3][3] * s)
     }
 }
 

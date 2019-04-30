@@ -46,17 +46,17 @@ fn line(x0: i32, y0: i32, x1: i32, y1: i32, image: &mut ppm::Image, color: ppm::
     }
 }
 
-fn barycenter(t: &[Vec3f; 3], p: Vec3f) -> Vec3f {
+fn barycenter(a: Vec3f, b: Vec3f, c: Vec3f, p: Vec3f) -> Vec3f {
     let v1 = Vec3f { 
-        x: (t[2].x - t[0].x),
-        y: (t[1].x - t[0].x),
-        z: (t[0].x - p.x),
+        x: c.x - a.x,
+        y: b.x - a.x,
+        z: a.x - p.x,
     };
 
     let v2 = Vec3f {
-        x: (t[2].y - t[0].y),
-        y: (t[1].y - t[0].y),
-        z: (t[0].y - p.y),
+        x: c.y - a.y,
+        y: b.y - a.y,
+        z: a.y - p.y,
     };
 
     let u = v1.cross(v2);
@@ -64,7 +64,7 @@ fn barycenter(t: &[Vec3f; 3], p: Vec3f) -> Vec3f {
     else { Vec3f::new(1_f32 - (u.x+u.y) / u.z, u.y / u.z, u.x / u.z) }
 }
 
-fn triangle(t: &[Vec3f; 3], uv: &[Vec3f; 3],  texture: &image::Image<u8>, intensity: f32, image: &mut ppm::Image,  z_buffer: &mut [f32]) {
+fn triangle(t: &[Vec3f; 3], n: &[Vec3f; 3], light_dir: Vec3f, uv: &[Vec3f; 3], texture: &image::Image<u8>, image: &mut ppm::Image,  z_buffer: &mut [f32]) {
     
     let xmin = t[0].x.min(t[1].x.min(t[2].x));
     let ymin = t[0].y.min(t[1].y.min(t[2].y));
@@ -82,7 +82,6 @@ fn triangle(t: &[Vec3f; 3], uv: &[Vec3f; 3],  texture: &image::Image<u8>, intens
     let iymin = ymin as i32;
     let iymax = ymax as i32;
 
-    println!("triangle: {:?}", t);
     for y in iymin..=iymax {
         for x in ixmin..=ixmax {
             let xu = x as usize;
@@ -90,8 +89,7 @@ fn triangle(t: &[Vec3f; 3], uv: &[Vec3f; 3],  texture: &image::Image<u8>, intens
 
             let mut p = Vec3f::new(x as f32, y as f32, 0.0);
 
-            let bar = barycenter(t, p);
-            println!("  point {:?}, barycenter {:?}, ", p, bar);
+            let bar = barycenter(t[0], t[1], t[2], p);
             if bar.x < 0_f32 || bar.y < 0_f32 || bar.z < 0_f32 { continue }
 
             p.z = t[0].z * bar.x + t[1].z * bar.y + t[2].z * bar.z;
@@ -100,19 +98,27 @@ fn triangle(t: &[Vec3f; 3], uv: &[Vec3f; 3],  texture: &image::Image<u8>, intens
             if *zb < p.z { 
                 *zb = p.z;
 
+                let ftwidth = texture.width as f32;
+                let ftheight = texture.height as f32;
+
+                let nx = bar.x * n[0].x + bar.y * n[1].x + bar.z * n[2].x;
+                let ny = bar.x * n[0].y + bar.y * n[1].y + bar.z * n[2].y;
+                let nz = bar.x * n[0].z + bar.y * n[1].z + bar.z * n[2].z;
+                let ndot = Vec3f::new(nx, ny, nz).normalized().dot(light_dir.normalized()).max(0.0);
+
                 let vtx = bar.x * uv[0].x + bar.y * uv[1].x + bar.z * uv[2].x;
                 let vty = bar.x * uv[0].y + bar.y * uv[1].y + bar.z * uv[2].y;
 
-                let u = (vtx * FWIDTH) as usize;
-                let v = (image.height - 1) - (vty * FHEIGHT) as usize; //flipped vertically
+                let u = (vtx * (ftwidth - 1.0)) as usize;
+                let v = (texture.height - 1) - ((vty * (ftheight - 1.0)) as usize); //flipped vertically
 
                 let r = texture.data[((v * image.width + u) * 3) + 0]; // RGB
                 let g = texture.data[((v * image.width + u) * 3) + 1]; // RGB
                 let b = texture.data[((v * image.width + u) * 3) + 2]; // RGB
 
-                let r = (r as f32 * intensity) as u8;
-                let g = (g as f32 * intensity) as u8;
-                let b = (b as f32 * intensity) as u8;
+                let r = (r as f32 * ndot) as u8;
+                let g = (g as f32 * ndot) as u8;
+                let b = (b as f32 * ndot) as u8;
 
                 image.set(x as usize, y as usize, ppm::RGB::new(r, g, b));
             }
@@ -144,36 +150,46 @@ fn render_mesh(filename: &str, texture_name: &str, image: &mut ppm::Image, z_buf
     println!("loading mesh content");
     let mesh = obj::Mesh::load(&content[..]);
 
-    let projection = Mat44::projection(Vec3f::new(0.0, 0.0, 3.0));
-    let viewport = Mat44::viewport(FWIDTH / 8.0, FHEIGHT / 8.0, (FWIDTH * 3.0) / 4.0, (FHEIGHT * 3.0) / 4.0, 255.0);
+    let eye = Vec3f::new(-1.0, -1.0, 3.0);
+    let center = Vec3f::new(0.0, 0.0, 0.0);
+    let up = Vec3f::new(0.0, 1.0, 0.0);
 
-    let pre_mult_mat = viewport * projection;
+    let object_to_eye = Mat44::lookat(eye, center, up);
+    let eye_to_view = Mat44::projection(-1.0/((eye - center).length()));
+    let view_to_screen = Mat44::viewport(FWIDTH / 8.0, FHEIGHT / 8.0, (FWIDTH * 3.0) / 4.0, (FHEIGHT * 3.0) / 4.0, 255.0);
+    let object_to_view = eye_to_view * object_to_eye;
+    let object_to_screen = view_to_screen * object_to_view;
 
+    let inv_object_to_view = object_to_view.inverse().transposed();
+
+    let light_dir = Vec3f::new(0.0, 0.0, 3.0).normalized();
     for chunk in mesh.faces.chunks(3) {
-        let (i1, t1, _) = chunk[0];
-        let (i2, t2, _) = chunk[1];
-        let (i3, t3, _) = chunk[2];
+        let (i1, t1, n1) = chunk[0];
+        let (i2, t2, n2) = chunk[1];
+        let (i3, t3, n3) = chunk[2];
 
-        let v1 = Vec3f::from(mesh.vertices[i1 as usize]);
-        let v2 = Vec3f::from(mesh.vertices[i2 as usize]);
-        let v3 = Vec3f::from(mesh.vertices[i3 as usize]);
+        let v1 = Vec3f::from(mesh.vertices[i1]);
+        let v2 = Vec3f::from(mesh.vertices[i2]);
+        let v3 = Vec3f::from(mesh.vertices[i3]);
 
-        let uv1 = Vec3f::from(mesh.texcoord[t1 as usize]);
-        let uv2 = Vec3f::from(mesh.texcoord[t2 as usize]);
-        let uv3 = Vec3f::from(mesh.texcoord[t3 as usize]);
+        let sv1 = Vec3f::from(object_to_screen * Vec4f::from(v1));
+        let sv2 = Vec3f::from(object_to_screen * Vec4f::from(v2));
+        let sv3 = Vec3f::from(object_to_screen * Vec4f::from(v3));
 
-        let sv1 = Vec3f::from(pre_mult_mat * Vec4f::from(v1));
-        let sv2 = Vec3f::from(pre_mult_mat * Vec4f::from(v2));
-        let sv3 = Vec3f::from(pre_mult_mat * Vec4f::from(v3));
+        let uv1 = Vec3f::from(mesh.texcoord[t1]);
+        let uv2 = Vec3f::from(mesh.texcoord[t2]);
+        let uv3 = Vec3f::from(mesh.texcoord[t3]);
 
-        let n = (v3 - v1).cross(v2 - v1).normalized();
-        let dot = n.dot(Vec3f::new(0_f32, 0_f32, -1_f32));
+        let vn1 = Vec3f::from(inv_object_to_view * Vec4f::from(Vec3f::from(mesh.normals[n1])));
+        let vn2 = Vec3f::from(inv_object_to_view * Vec4f::from(Vec3f::from(mesh.normals[n2])));
+        let vn3 = Vec3f::from(inv_object_to_view * Vec4f::from(Vec3f::from(mesh.normals[n3])));
 
-        if dot > 0_f32 {
-            let t: [Vec3f; 3] = [sv1, sv2, sv3];
-            let uv: [Vec3f; 3] = [uv1, uv2, uv3];
-            triangle(&t, &uv, &texture, dot, image, z_buffer);
-        }
+
+        let t: [Vec3f; 3] = [sv1, sv2, sv3];
+        let uv: [Vec3f; 3] = [uv1, uv2, uv3];
+        let vn: [Vec3f; 3] = [vn1, vn2, vn3];
+
+        triangle(&t, &vn, light_dir, &uv, &texture, image, z_buffer);
     }
     
     Ok(())
@@ -184,22 +200,7 @@ fn main() -> std::io::Result<()> {
     let mut z_buffer: [f32; WIDTH * HEIGHT] = [std::f32::MIN; WIDTH * HEIGHT];
     let mut image = ppm::Image::new(WIDTH, HEIGHT);
 
-    {
-        render_mesh("african_head.obj", "african_head_diffuse.tga", &mut image, &mut z_buffer)?;
-    }
-   
-    /*
-    {
-        let t0 = [Vec2i::new(10, 70), Vec2i::new(50, 160), Vec2i::new(70, 80)];
-        let t1 = [Vec2i::new(180, 50), Vec2i::new(150, 1), Vec2i::new(70, 180)];
-        let t2 = [Vec2i::new(180, 150), Vec2i::new(120, 160), Vec2i::new(130, 180)];
-
-
-        triangle(&t0, &mut image, ppm::RGB::red());
-        triangle(&t1, &mut image, ppm::RGB::white());
-        triangle(&t2, &mut image, ppm::RGB::green());
-    }
-    */
+    render_mesh("african_head.obj", "african_head_diffuse.tga", &mut image, &mut z_buffer)?;
 
     println!("opening the output");
     let mut output_dir = std::env::current_dir().unwrap();
