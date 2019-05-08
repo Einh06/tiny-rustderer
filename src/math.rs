@@ -156,8 +156,7 @@ impl IndexMut<usize> for Vec3f {
 
 impl From<Vec4f> for Vec3f {
     fn from(v: Vec4f) -> Vec3f {
-        let inv_w = 1.0 / v.w;
-        Vec3f::new(v.x * inv_w, v.y * inv_w, v.z * inv_w)
+        Vec3f::new(v.x, v.y, v.z)
     }
 }
 
@@ -188,6 +187,11 @@ impl Vec4f {
     pub fn normalized(self) -> Vec4f { 
         let inv_len = 1_f32 / self.length();
         Vec4f::new(self.x * inv_len, self.y * inv_len, self.z * inv_len, self.w * inv_len)
+    }
+
+    pub fn homogenize(self) -> Vec3f {
+        let inv_w = 1.0/self.w;
+        Vec3f::new(self.x * inv_w, self.y * inv_w, self.z * inv_w)
     }
 }
 
@@ -261,10 +265,12 @@ impl Mat44 {
                    [0_f32, 0_f32, 0_f32, 1_f32]] }
     }
 
+    #[allow(dead_code)]
     pub fn scale(s: f32) -> Mat44 {
         Mat44::identity() * s
     }
 
+    #[allow(dead_code)]
     pub fn translation(dx: f32, dy: f32, dz: f32) -> Mat44 {
         Mat44 {m: [[0_f32, 0_f32, 0_f32, dx], 
                    [0_f32, 0_f32, 0_f32, dy], 

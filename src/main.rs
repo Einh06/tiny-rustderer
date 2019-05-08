@@ -10,8 +10,8 @@ use math::{Vec3f, Vec4f, Mat44};
 
 use image::LoadResult::{Error, ImageU8, ImageF32};
 
-const WIDTH: usize = 1024;
-const HEIGHT: usize = 1024;
+const WIDTH: usize = 800;
+const HEIGHT: usize = 800;
 const FWIDTH: f32 = WIDTH as f32;
 const FHEIGHT: f32 = HEIGHT as f32;
 
@@ -66,68 +66,6 @@ fn barycenter(a: Vec3f, b: Vec3f, c: Vec3f, p: Vec3f) -> Vec3f {
     else { Vec3f::new(1_f32 - (u.x+u.y) / u.z, u.y / u.z, u.x / u.z) }
 }
 
-fn triangle(t: &[Vec3f; 3], n: &[Vec3f; 3], light_dir: Vec3f, uv: &[Vec3f; 3], texture: &image::Image<u8>, image: &mut ppm::Image,  z_buffer: &mut [f32]) {
-    
-    let xmin = t[0].x.min(t[1].x.min(t[2].x));
-    let ymin = t[0].y.min(t[1].y.min(t[2].y));
-    let xmax = t[0].x.max(t[1].x.max(t[2].x));
-    let ymax = t[0].y.max(t[1].y.max(t[2].y));
-
-    //Clamping
-    let xmin = xmin.max(0_f32); 
-    let xmax = xmax.min(FWIDTH - 1_f32);
-    let ymin = ymin.max(0_f32);
-    let ymax = ymax.min(FHEIGHT - 1_f32);
-
-    let ixmin = xmin as i32;
-    let ixmax = xmax as i32;
-    let iymin = ymin as i32;
-    let iymax = ymax as i32;
-
-    for y in iymin..=iymax {
-        for x in ixmin..=ixmax {
-            let xu = x as usize;
-            let yu = y as usize;
-
-            let mut p = Vec3f::new(x as f32, y as f32, 0.0);
-
-            let bar = barycenter(t[0], t[1], t[2], p);
-            if bar.x < 0_f32 || bar.y < 0_f32 || bar.z < 0_f32 { continue }
-
-            p.z = t[0].z * bar.x + t[1].z * bar.y + t[2].z * bar.z;
-            let mut zb = &mut z_buffer[(yu*WIDTH)+xu];
-
-            if *zb < p.z { 
-                *zb = p.z;
-
-                let ftwidth = texture.width as f32;
-                let ftheight = texture.height as f32;
-
-                let nx = bar.x * n[0].x + bar.y * n[1].x + bar.z * n[2].x;
-                let ny = bar.x * n[0].y + bar.y * n[1].y + bar.z * n[2].y;
-                let nz = bar.x * n[0].z + bar.y * n[1].z + bar.z * n[2].z;
-                let ndot = Vec3f::new(nx, ny, nz).normalized().dot(light_dir.normalized()).max(0.0);
-
-                let vtx = bar.x * uv[0].x + bar.y * uv[1].x + bar.z * uv[2].x;
-                let vty = bar.x * uv[0].y + bar.y * uv[1].y + bar.z * uv[2].y;
-
-                let u = (vtx * (ftwidth - 1.0)) as usize;
-                let v = (texture.height - 1) - ((vty * (ftheight - 1.0)) as usize); //flipped vertically
-
-                let r = texture.data[((v * image.width + u) * 3) + 0]; // RGB
-                let g = texture.data[((v * image.width + u) * 3) + 1]; // RGB
-                let b = texture.data[((v * image.width + u) * 3) + 2]; // RGB
-
-                let r = (r as f32 * ndot) as u8;
-                let g = (g as f32 * ndot) as u8;
-                let b = (b as f32 * ndot) as u8;
-
-                image.set(x as usize, y as usize, ppm::RGB::new(r, g, b));
-            }
-        }
-    }
-}
-
 fn render_mesh(filename: &str, texture_name: &str, normal_map_name: &str, image: &mut ppm::Image, z_buffer: &mut [f32]) -> std::io::Result<()> {
     let mut resource_dir = std::env::current_dir().unwrap();
     resource_dir.push("rsrc");
@@ -160,46 +98,92 @@ fn render_mesh(filename: &str, texture_name: &str, normal_map_name: &str, image:
     println!("loading mesh content");
     let mesh = obj::Mesh::load(&content[..]);
 
-    let eye = Vec3f::new(0.5, 0.5, 1.5);
+    let eye = Vec3f::new(1.0, 1.0, 3.0);
     let center = Vec3f::new(0.0, 0.0, 0.0);
     let up = Vec3f::new(0.0, 1.0, 0.0);
 
-    let object_to_eye = Mat44::lookat(eye, center, up);
-    let eye_to_view = Mat44::projection(-1.0/((eye - center).length()));
-    let view_to_screen = Mat44::viewport(FWIDTH / 8.0, FHEIGHT / 8.0, (FWIDTH * 3.0) / 4.0, (FHEIGHT * 3.0) / 4.0, 255.0);
-    let object_to_view = eye_to_view * object_to_eye;
-    let object_to_screen = view_to_screen * object_to_view;
+    let eye_from_object = Mat44::lookat(eye, center, up);
+    let view_from_eye = Mat44::projection(-1.0/(eye - center).length());
+    let screen_from_view = Mat44::viewport(FWIDTH / 8.0, FHEIGHT / 8.0, (FWIDTH * 3.0) / 4.0, (FHEIGHT * 3.0) / 4.0, 255.0);
+    let view_from_object = view_from_eye * eye_from_object;
+    let screen_from_object = screen_from_view * view_from_object;
 
-    let inv_object_to_view = object_to_view.inverse().transposed();
+    let view_from_object_it = view_from_object.inverse().transposed();
 
-    let light_dir = Vec3f::new(0.0, 0.0, 1.0).normalized();
+    let light_dir = Vec4f::new(1.0, 1.0, 1.0, 0.0);
+    let trans_light_dir = Vec3f::from(view_from_object * light_dir).normalized();
+
     for chunk in mesh.faces.chunks(3) {
-        let (i1, t1, n1) = chunk[0];
-        let (i2, t2, n2) = chunk[1];
-        let (i3, t3, n3) = chunk[2];
+        let (i1, t1, _n1) = chunk[0];
+        let (i2, t2, _n2) = chunk[1];
+        let (i3, t3, _n3) = chunk[2];
 
-        let v1 = Vec3f::from(mesh.vertices[i1]);
-        let v2 = Vec3f::from(mesh.vertices[i2]);
-        let v3 = Vec3f::from(mesh.vertices[i3]);
-
-        let sv1 = Vec3f::from(object_to_screen * Vec4f::from(v1));
-        let sv2 = Vec3f::from(object_to_screen * Vec4f::from(v2));
-        let sv3 = Vec3f::from(object_to_screen * Vec4f::from(v3));
+        let sv1 = (screen_from_object * Vec4f::from(Vec3f::from(mesh.vertices[i1]))).homogenize();
+        let sv2 = (screen_from_object * Vec4f::from(Vec3f::from(mesh.vertices[i2]))).homogenize();
+        let sv3 = (screen_from_object * Vec4f::from(Vec3f::from(mesh.vertices[i3]))).homogenize();
 
         let uv1 = Vec3f::from(mesh.texcoord[t1]);
         let uv2 = Vec3f::from(mesh.texcoord[t2]);
         let uv3 = Vec3f::from(mesh.texcoord[t3]);
 
-        let vn1 = Vec3f::from(inv_object_to_view * Vec4f::from(Vec3f::from(mesh.normals[n1])));
-        let vn2 = Vec3f::from(inv_object_to_view * Vec4f::from(Vec3f::from(mesh.normals[n2])));
-        let vn3 = Vec3f::from(inv_object_to_view * Vec4f::from(Vec3f::from(mesh.normals[n3])));
+        // bounding box for triangle
+        let ixmin = sv1.x.min(sv2.x.min(sv3.x)).max(0.0) as i32;
+        let iymin = sv1.y.min(sv2.y.min(sv3.y)).max(0.0) as i32;
+        let ixmax = sv1.x.max(sv2.x.max(sv3.x)).min(FWIDTH - 1.0) as i32;
+        let iymax = sv1.y.max(sv2.y.max(sv3.y)).min(FHEIGHT - 1.0) as i32;
 
+        for y in iymin..=iymax {
+            for x in ixmin..=ixmax {
+                let xu = x as usize;
+                let yu = y as usize;
 
-        let t: [Vec3f; 3] = [sv1, sv2, sv3];
-        let uv: [Vec3f; 3] = [uv1, uv2, uv3];
-        let vn: [Vec3f; 3] = [vn1, vn2, vn3];
+                let mut p = Vec3f::new(x as f32, y as f32, 0.0);
 
-        triangle(&t, &vn, light_dir, &uv, &texture, image, z_buffer);
+                let bar = barycenter(sv1, sv2, sv3, p);
+                if bar.x < 0_f32 || bar.y < 0_f32 || bar.z < 0_f32 { continue }
+
+                p.z = sv1.z * bar.x + sv2.z * bar.y + sv3.z * bar.z;
+                let mut zb = &mut z_buffer[(yu*WIDTH)+xu];
+
+                if *zb < p.z { 
+                    *zb = p.z;
+                    let u = bar.x * uv1.x + bar.y * uv2.x + bar.z * uv3.x;
+                    let v = bar.x * uv1.y + bar.y * uv2.y + bar.z * uv3.y;
+
+                    // get normal from normal map
+                    let fnwidth  = normal_map.width  as f32;
+                    let fnheight = normal_map.height as f32;
+                    let nu = (u * (fnwidth - 1.0)) as usize;
+                    let nv = (normal_map.height - 1) - ((v * (fnheight - 1.0)) as usize); //flipped vertically
+
+                    let pixel_index = (nv * normal_map.width + nu) * 3;
+                    let nx = f32::from(normal_map.data[pixel_index + 0]) / 255.0; 
+                    let ny = f32::from(normal_map.data[pixel_index + 1]) / 255.0; 
+                    let nz = f32::from(normal_map.data[pixel_index + 2]) / 255.0; 
+
+                    let normal = Vec3f::from(view_from_object_it * Vec4f::new(nx, ny, nz, 0.0)).normalized();
+                    let intensity = normal.dot(trans_light_dir).max(0.0);
+
+                    // get texture pixel color from texture
+                    let ftwidth = texture.width as f32;
+                    let ftheight = texture.height as f32;
+
+                    let tu = (u * (ftwidth - 1.0)) as usize;
+                    let tv = (texture.height - 1) - ((v * (ftheight - 1.0)) as usize); //flipped vertically
+
+                    let pixel_index = (tv * texture.width + tu) * 3;
+                    let r = texture.data[pixel_index + 0]; // RGB
+                    let g = texture.data[pixel_index + 1]; // RGB
+                    let b = texture.data[pixel_index + 2]; // RGB
+
+                    let r = (r as f32 * intensity) as u8;
+                    let g = (g as f32 * intensity) as u8;
+                    let b = (b as f32 * intensity) as u8;
+
+                    image.set(x as usize, y as usize, ppm::RGB::new(r, g, b));
+                }
+            }
+        }
     }
     
     Ok(())
