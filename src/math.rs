@@ -174,14 +174,17 @@ impl Vec4f {
         Vec4f {x,y,z,w}
     }
 
+    #[allow(dead_code)]
     pub fn length(self) -> f32 {
         self.dot(self).sqrt()
     }
 
+    #[allow(dead_code)]
     pub fn dot(self, v: Vec4f) -> f32 {
         (self.x * v.x + self.y * v.y + self.z * v.z + self.w * v.w)
     }
     
+    #[allow(dead_code)]
     pub fn normalized(self) -> Vec4f { 
         let inv_len = 1_f32 / self.length();
         Vec4f::new(self.x * inv_len, self.y * inv_len, self.z * inv_len, self.w * inv_len)
@@ -284,11 +287,10 @@ impl Mat44 {
 
         let mut res = Mat44::identity();
 
-        res.m[0][0] = u.x; res.m[0][1] = u.y; res.m[0][2] = u.z;
-        res.m[1][0] = v.x; res.m[1][1] = v.y; res.m[1][2] = v.z;
-        res.m[2][0] = w.x; res.m[2][1] = w.y; res.m[2][2] = w.z;
-        res.m[0][3] = -u.dot(eye); res.m[1][3] = -v.dot(eye); res.m[2][3] = -w.dot(eye);
-        
+        res.m[0][0] = u.x; res.m[0][1] = u.y; res.m[0][2] = u.z; res.m[0][3] = -u.dot(eye);
+        res.m[1][0] = v.x; res.m[1][1] = v.y; res.m[1][2] = v.z; res.m[1][3] = -v.dot(eye);
+        res.m[2][0] = w.x; res.m[2][1] = w.y; res.m[2][2] = w.z; res.m[2][3] = -w.dot(eye);
+
         res
     }
 

@@ -8,6 +8,8 @@ use std::io::{Write, Read};
 use stb_image::image;
 use math::{Vec3f, Vec4f, Mat44};
 
+use image::LoadResult::{Error, ImageU8, ImageF32};
+
 const WIDTH: usize = 1024;
 const HEIGHT: usize = 1024;
 const FWIDTH: f32 = WIDTH as f32;
@@ -126,19 +128,27 @@ fn triangle(t: &[Vec3f; 3], n: &[Vec3f; 3], light_dir: Vec3f, uv: &[Vec3f; 3], t
     }
 }
 
-fn render_mesh(filename: &str, texture_name: &str, image: &mut ppm::Image, z_buffer: &mut [f32]) -> std::io::Result<()> {
+fn render_mesh(filename: &str, texture_name: &str, normal_map_name: &str, image: &mut ppm::Image, z_buffer: &mut [f32]) -> std::io::Result<()> {
     let mut resource_dir = std::env::current_dir().unwrap();
     resource_dir.push("rsrc");
     let mut texture_path = resource_dir.clone();
+    let mut normal_map_path = resource_dir.clone();
 
     resource_dir.push(filename);
     texture_path.push(texture_name);
+    normal_map_path.push(normal_map_name);
 
     let texture: image::Image<u8>;
-    use image::LoadResult::{Error, ImageU8, ImageF32};
     match image::load(texture_path.as_path()) {
         Error(str) => panic!(str),
         ImageU8(image) => texture = image,
+        ImageF32(_image) => panic!("Wrong image format"),
+    };
+
+    let normal_map: image::Image<u8>;
+    match image::load(texture_path.as_path()) {
+        Error(str) => panic!(str),
+        ImageU8(image) => normal_map = image,
         ImageF32(_image) => panic!("Wrong image format"),
     };
 
@@ -150,7 +160,7 @@ fn render_mesh(filename: &str, texture_name: &str, image: &mut ppm::Image, z_buf
     println!("loading mesh content");
     let mesh = obj::Mesh::load(&content[..]);
 
-    let eye = Vec3f::new(-1.0, -1.0, 3.0);
+    let eye = Vec3f::new(0.5, 0.5, 1.5);
     let center = Vec3f::new(0.0, 0.0, 0.0);
     let up = Vec3f::new(0.0, 1.0, 0.0);
 
@@ -162,7 +172,7 @@ fn render_mesh(filename: &str, texture_name: &str, image: &mut ppm::Image, z_buf
 
     let inv_object_to_view = object_to_view.inverse().transposed();
 
-    let light_dir = Vec3f::new(0.0, 0.0, 3.0).normalized();
+    let light_dir = Vec3f::new(0.0, 0.0, 1.0).normalized();
     for chunk in mesh.faces.chunks(3) {
         let (i1, t1, n1) = chunk[0];
         let (i2, t2, n2) = chunk[1];
@@ -200,7 +210,7 @@ fn main() -> std::io::Result<()> {
     let mut z_buffer: [f32; WIDTH * HEIGHT] = [std::f32::MIN; WIDTH * HEIGHT];
     let mut image = ppm::Image::new(WIDTH, HEIGHT);
 
-    render_mesh("african_head.obj", "african_head_diffuse.tga", &mut image, &mut z_buffer)?;
+    render_mesh("african_head.obj", "african_head_diffuse.tga", "african_head_nm.png", &mut image, &mut z_buffer)?;
 
     println!("opening the output");
     let mut output_dir = std::env::current_dir().unwrap();
