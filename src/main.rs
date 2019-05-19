@@ -108,7 +108,7 @@ fn render_mesh(filename: &str, texture_name: &str, normal_map_name: &str, image:
     let view_from_object = view_from_eye * eye_from_object;
     let screen_from_object = screen_from_view * view_from_object;
 
-    let view_from_object_it = view_from_object.inverse().transposed();
+    let eye_from_object_it = eye_from_object.inverse().transposed();
 
     let light_dir = Vec4f::new(1.0, 1.0, 1.0, 0.0);
     let trans_light_dir = Vec3f::from(view_from_object * light_dir).normalized();
@@ -153,32 +153,32 @@ fn render_mesh(filename: &str, texture_name: &str, normal_map_name: &str, image:
                     // get normal from normal map
                     let fnwidth  = normal_map.width  as f32;
                     let fnheight = normal_map.height as f32;
-                    let nu = (u * (fnwidth - 1.0)) as usize;
-                    let nv = (normal_map.height - 1) - ((v * (fnheight - 1.0)) as usize); //flipped vertically
+                    let nu = (u * fnwidth) as usize;
+                    let nv = ((1.0 - v) * (fnheight - 1.0)) as usize; //flipped vertically
 
                     let pixel_index = (nv * normal_map.width + nu) * 3;
                     let nx = f32::from(normal_map.data[pixel_index + 0]) / 255.0; 
                     let ny = f32::from(normal_map.data[pixel_index + 1]) / 255.0; 
                     let nz = f32::from(normal_map.data[pixel_index + 2]) / 255.0; 
 
-                    let normal = Vec3f::from(view_from_object_it * Vec4f::new(nx, ny, nz, 0.0)).normalized();
+                    let normal = Vec3f::from(eye_from_object_it * Vec4f::new(nx, ny, nz, 0.0)).normalized();
                     let intensity = normal.dot(trans_light_dir).max(0.0);
 
                     // get texture pixel color from texture
                     let ftwidth = texture.width as f32;
                     let ftheight = texture.height as f32;
 
-                    let tu = (u * (ftwidth - 1.0)) as usize;
-                    let tv = (texture.height - 1) - ((v * (ftheight - 1.0)) as usize); //flipped vertically
+                    let tu = (u * ftwidth) as usize;
+                    let tv = ((1.0 - v) * (ftheight - 1.0)) as usize; //flipped vertically
 
                     let pixel_index = (tv * texture.width + tu) * 3;
                     let r = texture.data[pixel_index + 0]; // RGB
                     let g = texture.data[pixel_index + 1]; // RGB
                     let b = texture.data[pixel_index + 2]; // RGB
 
-                    let r = (r as f32 * intensity) as u8;
-                    let g = (g as f32 * intensity) as u8;
-                    let b = (b as f32 * intensity) as u8;
+                    let r = (f32::from(r) * intensity) as u8;
+                    let g = (f32::from(g) * intensity) as u8;
+                    let b = (f32::from(b) * intensity) as u8;
 
                     image.set(x as usize, y as usize, ppm::RGB::new(r, g, b));
                 }
@@ -209,7 +209,7 @@ fn main() -> std::io::Result<()> {
     let mut file = File::create(output_dir.as_path())?;
 
     println!("Writing to output");
-    file.write(String::from(&image).as_bytes())?;
+    file.write_all(String::from(&image).as_bytes())?;
 
     println!("Done!");
     Ok(())
