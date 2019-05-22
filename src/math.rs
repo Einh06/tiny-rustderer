@@ -9,6 +9,8 @@ pub struct Vec2i {
 }
 
 impl Vec2i {
+
+    #[inline(always)]
     pub fn new(x: i32, y: i32) -> Vec2i{
         Vec2i {x, y}
     }
@@ -87,18 +89,22 @@ pub struct Vec3f {
 }
 
 impl Vec3f {
+    #[inline(always)]
     pub fn new(x: f32, y: f32, z: f32) -> Vec3f {
         Vec3f {x,y,z}
     }
 
+    #[inline(always)]
     pub fn length(self) -> f32 {
         (self.x * self.x + self.y * self.y + self.z * self.z).sqrt()
     }
 
+    #[inline(always)]
     pub fn dot(self, v: Vec3f) -> f32 {
         self.x * v.x + self.y * v.y + self.z * v.z
     }
 
+    #[inline(always)]
     pub fn cross(self, v: Vec3f) -> Vec3f {
         Vec3f {
             x: self.y * v.z - self.z * v.y,
@@ -107,6 +113,7 @@ impl Vec3f {
         }
     }
     
+    #[inline(always)]
     pub fn normalized(self) -> Vec3f { 
         let inv_len = 1_f32 / self.length();
         Vec3f::new(self.x * inv_len, self.y * inv_len, self.z * inv_len)
@@ -115,6 +122,8 @@ impl Vec3f {
 
 impl Sub<Vec3f> for Vec3f {
     type Output = Vec3f;
+
+    #[inline(always)]
     fn sub(self, v: Vec3f) -> Vec3f {
         Vec3f::new(self.x - v.x, self.y - v.y, self.z - v.z)
     }
@@ -122,6 +131,8 @@ impl Sub<Vec3f> for Vec3f {
 
 impl Neg for Vec3f {
     type Output = Vec3f;
+
+    #[inline(always)]
     fn neg(self) -> Vec3f {
         Vec3f::new(-self.x, -self.y, -self.z)
     }
@@ -129,6 +140,8 @@ impl Neg for Vec3f {
 
 impl Mul<f32> for Vec3f {
     type Output = Vec3f;
+
+    #[inline(always)]
     fn mul(self, s: f32) -> Vec3f {
         Vec3f::new(self.x * s, self.y * s, self.z * s)
     }
@@ -191,6 +204,7 @@ impl Vec4f {
         Vec4f::new(self.x * inv_len, self.y * inv_len, self.z * inv_len, self.w * inv_len)
     }
 
+    #[inline(always)]
     pub fn homogenize(self) -> Vec3f {
         let inv_w = 1.0/self.w;
         Vec3f::new(self.x * inv_w, self.y * inv_w, self.z * inv_w)
@@ -199,6 +213,8 @@ impl Vec4f {
 
 impl Sub<Vec4f> for Vec4f {
     type Output = Vec4f;
+
+    #[inline(always)]
     fn sub(self, v: Vec4f) -> Vec4f {
         Vec4f::new(self.x - v.x, self.y - v.y, self.z - v.z, self.w - v.w)
     }
@@ -206,6 +222,8 @@ impl Sub<Vec4f> for Vec4f {
 
 impl Neg for Vec4f {
     type Output = Vec4f;
+
+    #[inline(always)]
     fn neg(self) -> Vec4f {
         Vec4f::new(-self.x, -self.y, -self.z, -self.w)
     }

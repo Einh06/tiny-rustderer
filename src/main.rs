@@ -183,7 +183,6 @@ fn render_mesh(filename: &str, texture_name: &str, normal_map_name: &str, tangen
 
                         let bitangent = bn.cross(tangent);
 
-
                         let tbn = Mat33::from_col_vec(tangent, bitangent, bn);
                         let tbn_inv = tbn.transposed();
 
