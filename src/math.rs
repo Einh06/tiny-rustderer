@@ -247,6 +247,85 @@ pub struct Mat33 {
     pub m: [[f32; 3]; 3]
 }
 
+impl Mat33 {
+
+    pub fn new(m00: f32, m01: f32, m02: f32, m10: f32, m11: f32, m12: f32, m20: f32, m21: f32, m22: f32) -> Mat33 {
+
+        Mat33 { m: [[m00, m01, m02], [m10, m11, m12], [m20, m21, m22]] }
+    }
+
+    pub fn from_row_vec(v1: Vec3f, v2: Vec3f, v3: Vec3f) -> Mat33 {
+        Mat33 { m: [[v1.x, v1.y, v1.z], [v2.x, v2.y, v2.z], [v3.x, v3.y, v3.z]] }   
+    }
+
+    pub fn from_col_vec(v1: Vec3f, v2: Vec3f, v3: Vec3f) -> Mat33 {
+        Mat33 { m: [[v1.x, v2.x, v3.x], [v1.y, v2.y, v3.y], [v1.z, v2.z, v3.z]] }   
+    }
+
+    pub fn transposed(&self) -> Mat33 {
+        let m = &self.m;
+        Mat33::new(m[0][0], m[1][0], m[2][0],
+                   m[0][1], m[1][1], m[2][1],
+                   m[0][2], m[1][2], m[2][2])
+    }
+
+    pub fn determinant(&self) -> f32 {
+        let m = &self.m;
+        m[0][0] * m[1][1] * m[2][2] + m[0][1] * m[1][2] * m[2][0] + m[0][2] * m[1][0] * m[2][1] 
+      - m[0][2] * m[1][1] * m[2][0] - m[0][1] * m[1][0] * m[2][2] - m[0][0] * m[1][2] * m[2][1]
+    }
+
+    pub fn cofactor(&self) -> Mat33 {
+
+        let m = &self.m;
+
+        let mut res = Mat33::new( 1.0, -1.0,  1.0,
+                                 -1.0,  1.0, -1.0,
+                                  1.0, -1.0,  1.0);
+
+        res.m[0][0] *= m[1][1] * m[2][2] - m[1][2] * m[2][1];
+        res.m[0][1] *= m[1][0] * m[2][2] - m[1][2] * m[2][0];
+        res.m[0][2] *= m[1][0] * m[2][1] - m[1][1] * m[2][0];
+
+        res.m[1][0] *= m[0][1] * m[2][2] - m[0][2] * m[2][0];
+        res.m[1][1] *= m[0][0] * m[2][2] - m[0][2] * m[2][0];
+        res.m[1][2] *= m[0][0] * m[2][1] - m[0][1] * m[2][0];
+
+        res.m[2][0] *= m[0][1] * m[1][2] - m[0][2] * m[1][1];
+        res.m[2][1] *= m[0][0] * m[1][2] - m[0][2] * m[1][0];
+        res.m[2][2] *= m[0][0] * m[1][1] - m[0][1] * m[1][0];
+
+        res
+    }
+
+    pub fn inverse(&self) -> Mat33 {
+        self.cofactor().transposed() * (1.0 / self.determinant())
+    }
+
+}
+
+impl Mul<Vec3f> for Mat33 {
+    type Output = Vec3f;
+
+    fn mul(self, v: Vec3f) -> Vec3f {
+
+        Vec3f::new(self.m[0][0] * v.x + self.m[0][1] * v.y + self.m[0][2] * v.z,
+                   self.m[1][0] * v.x + self.m[1][1] * v.y + self.m[1][2] * v.z,
+                   self.m[2][0] * v.x + self.m[2][1] * v.y + self.m[2][2] * v.z)
+    }
+}
+
+impl Mul<f32> for Mat33 {
+
+    type Output = Mat33;
+
+    fn mul(self, s: f32) -> Mat33 {
+        Mat33::new(self.m[0][0] * s, self.m[0][1] * s, self.m[0][2] * s,
+                   self.m[1][0] * s, self.m[1][1] * s, self.m[1][2] * s,
+                   self.m[2][0] * s, self.m[2][1] * s, self.m[2][2] * s)
+    }
+}
+
 #[derive(Copy, Clone)]
 pub struct Mat44 {
     pub m: [[f32; 4]; 4]
@@ -449,25 +528,72 @@ impl std::fmt::Debug for Mat44 {
 
 }
 
-#[cfg(test)]
-impl PartialEq for Mat44 {
-    fn eq(&self, rhs: &Mat44) -> bool {
-        for i in 0..4 {
-            for j in 0..4 {
-                if (self.m[i][j] - rhs.m[i][j]) > EPSILON { return false; }
-            }
-        }
-
-        true
+impl std::fmt::Debug for Mat33 {
+    
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        write!(f, "Mat33 {{\n {:?}\n {:?}\n {:?}\n\n", self.m[0], self.m[1], self.m[2])
     }
+
 }
+
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
+    impl PartialEq for Mat44 {
+        fn eq(&self, rhs: &Mat44) -> bool {
+            for i in 0..4 {
+                for j in 0..4 {
+                    if (self.m[i][j] - rhs.m[i][j]) > EPSILON { return false; }
+                }
+            }
+    
+            true
+        }
+    }
+
+    impl PartialEq for Mat33 {
+        fn eq(&self, rhs: &Mat33) -> bool {
+            for i in 0..3 {
+                for j in 0..3 {
+                    if (self.m[i][j] - rhs.m[i][j]) > EPSILON { return false; }
+                }
+            }
+    
+            true
+        }
+    }
+
+
     #[test]
-    fn determinant_test() {
+    fn mat33_determinant_test() {
+        let m = Mat33::new(4.000, 3.000, 8.000,
+                           2.000, 5.000, 7.000,
+                           8.000, 1.000, 6.000);
+        assert_eq!(m.determinant(), -80.000);
+
+         let m = Mat33::new(1.000, 9.000, 9.000,
+                            8.000, 0.000, 7.000,
+                            4.000, 2.000, 3.000);
+        assert_eq!(m.determinant(), 166.000);
+
+    }
+
+    #[test]
+    fn mat33_inverse_test() {
+        let m = Mat33::new(4.000, 3.000, 8.000,
+                           2.000, 5.000, 7.000,
+                           8.000, 1.000, 6.000);
+        let expected = Mat33::new(-0.288,  0.125,  0.238,
+                                  -0.550,  0.500,  0.150,
+                                   0.475, -0.250, -0.175 );
+
+        assert_eq!(m.inverse(), expected);
+    }
+
+    #[test]
+    fn mat44_determinant_test() {
         let m = Mat44::identity();
         assert_eq!(m.determinant(), 1.0);
 
@@ -497,7 +623,7 @@ mod tests {
     }
 
     #[test]
-    fn inverse_test()  {
+    fn mat44_inverse_test()  {
         let m = Mat44::new(5.2, 5.8, 5.5, 7.7,
                            1.9, 4.5, 3.5, 6.3,
                            1.3, 6.1, 3.3, 4.4,

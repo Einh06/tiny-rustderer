@@ -6,7 +6,7 @@ mod obj;
 use std::fs::{DirBuilder, File};
 use std::io::{Write, Read};
 use stb_image::image;
-use math::{Vec3f, Vec4f, Mat44};
+use math::{Vec3f, Vec4f, Mat33, Mat44};
 
 use image::LoadResult::{Error, ImageU8, ImageF32};
 
@@ -66,30 +66,44 @@ fn barycenter(a: Vec3f, b: Vec3f, c: Vec3f, p: Vec3f) -> Vec3f {
     else { Vec3f::new(1_f32 - (u.x+u.y) / u.z, u.y / u.z, u.x / u.z) }
 }
 
-fn render_mesh(filename: &str, texture_name: &str, normal_map_name: &str, image: &mut ppm::Image, z_buffer: &mut [f32]) -> std::io::Result<()> {
+fn render_mesh(filename: &str, texture_name: &str, normal_map_name: &str, tangent_map_name: &str, image: &mut ppm::Image, z_buffer: &mut [f32]) -> std::io::Result<()> {
     let mut resource_dir = std::env::current_dir().unwrap();
     resource_dir.push("rsrc");
-    let mut texture_path = resource_dir.clone();
-    let mut normal_map_path = resource_dir.clone();
+    
+    let texture = {
+        let mut texture_path = resource_dir.clone();
+        texture_path.push(texture_name);
+        let image = match image::load(texture_path.as_path()) {
+            Error(str) => panic!(str),
+            ImageU8(image) => image,
+            ImageF32(_image) => panic!("Wrong image format"),
+        };
+        image
+    };
+
+    let normal_map = {
+        let mut normal_map_path = resource_dir.clone();
+        normal_map_path.push(normal_map_name);
+        let image = match image::load(normal_map_path.as_path()) {
+            Error(str) => panic!(str),
+            ImageU8(image) => image,
+            ImageF32(_image) => panic!("Wrong image format"),
+        };
+        image
+    };
+
+    let tangent_map = {
+        let mut tangent_map_path = resource_dir.clone();
+        tangent_map_path.push(tangent_map_name);
+        let image = match image::load(tangent_map_path.as_path()) {
+            Error(str) => panic!(str),
+            ImageU8(image) => image,
+            ImageF32(_image) => panic!("Wrong image format"),
+        };
+        image
+    };
 
     resource_dir.push(filename);
-    texture_path.push(texture_name);
-    normal_map_path.push(normal_map_name);
-
-    let texture: image::Image<u8>;
-    match image::load(texture_path.as_path()) {
-        Error(str) => panic!(str),
-        ImageU8(image) => texture = image,
-        ImageF32(_image) => panic!("Wrong image format"),
-    };
-
-    let normal_map: image::Image<u8>;
-    match image::load(texture_path.as_path()) {
-        Error(str) => panic!(str),
-        ImageU8(image) => normal_map = image,
-        ImageF32(_image) => panic!("Wrong image format"),
-    };
-
     println!("Opening model file");
     let mut file = File::open(resource_dir.as_path())?;
     let mut content = String::new();
@@ -98,78 +112,128 @@ fn render_mesh(filename: &str, texture_name: &str, normal_map_name: &str, image:
     println!("loading mesh content");
     let mesh = obj::Mesh::load(&content[..]);
 
-    let eye = Vec3f::new(1.0, 1.0, 3.0);
-    let center = Vec3f::new(0.0, 0.0, 0.0);
-    let up = Vec3f::new(0.0, 1.0, 0.0);
+    let eye     = Vec3f::new(1.0, 1.0, 3.0);
+    let center  = Vec3f::new(0.0, 0.0, 0.0);
+    let up      = Vec3f::new(0.0, 1.0, 0.0);
 
-    let eye_from_object = Mat44::lookat(eye, center, up);
-    let view_from_eye = Mat44::projection(-1.0/(eye - center).length());
-    let screen_from_view = Mat44::viewport(FWIDTH / 8.0, FHEIGHT / 8.0, (FWIDTH * 3.0) / 4.0, (FHEIGHT * 3.0) / 4.0, 255.0);
-    let view_from_object = view_from_eye * eye_from_object;
-    let screen_from_object = screen_from_view * view_from_object;
+    let camera_from_world   = Mat44::lookat(eye, center, up);
+    let view_from_camera    = Mat44::projection(-1.0/(eye - center).length());
+    let screen_from_view    = Mat44::viewport(FWIDTH / 8.0, FHEIGHT / 8.0, (FWIDTH * 3.0) / 4.0, (FHEIGHT * 3.0) / 4.0, 255.0);
 
-    let eye_from_object_it = eye_from_object.inverse().transposed();
+    let screen_from_world = screen_from_view * view_from_camera * camera_from_world;
 
-    let light_dir = Vec4f::new(1.0, 1.0, 1.0, 0.0);
-    let trans_light_dir = Vec3f::from(view_from_object * light_dir).normalized();
+    let light_dir_worldspace = Vec3f::new(1.0, 1.0, 1.0).normalized();
 
     for chunk in mesh.faces.chunks(3) {
-        let (i1, t1, _n1) = chunk[0];
-        let (i2, t2, _n2) = chunk[1];
-        let (i3, t3, _n3) = chunk[2];
+        let (i1, t1, n1) = chunk[0];
+        let (i2, t2, n2) = chunk[1];
+        let (i3, t3, n3) = chunk[2];
 
-        let sv1 = (screen_from_object * Vec4f::from(Vec3f::from(mesh.vertices[i1]))).homogenize();
-        let sv2 = (screen_from_object * Vec4f::from(Vec3f::from(mesh.vertices[i2]))).homogenize();
-        let sv3 = (screen_from_object * Vec4f::from(Vec3f::from(mesh.vertices[i3]))).homogenize();
+        let v1_worldspace = Vec3f::from(mesh.vertices[i1]);
+        let v2_worldspace = Vec3f::from(mesh.vertices[i2]);
+        let v3_worldspace = Vec3f::from(mesh.vertices[i3]);
+
+        let v1_screenspace = (screen_from_world * Vec4f::from(v1_worldspace)).homogenize();
+        let v2_screenspace = (screen_from_world * Vec4f::from(v2_worldspace)).homogenize();
+        let v3_screenspace = (screen_from_world * Vec4f::from(v3_worldspace)).homogenize();
 
         let uv1 = Vec3f::from(mesh.texcoord[t1]);
         let uv2 = Vec3f::from(mesh.texcoord[t2]);
         let uv3 = Vec3f::from(mesh.texcoord[t3]);
 
+        let n1_worldspace = Vec3f::from(mesh.normals[n1]);
+        let n2_worldspace = Vec3f::from(mesh.normals[n2]);
+        let n3_worldspace = Vec3f::from(mesh.normals[n3]);
+
         // bounding box for triangle
-        let ixmin = sv1.x.min(sv2.x.min(sv3.x)).max(0.0) as i32;
-        let iymin = sv1.y.min(sv2.y.min(sv3.y)).max(0.0) as i32;
-        let ixmax = sv1.x.max(sv2.x.max(sv3.x)).min(FWIDTH - 1.0) as i32;
-        let iymax = sv1.y.max(sv2.y.max(sv3.y)).min(FHEIGHT - 1.0) as i32;
+        let ixmin = v1_screenspace.x.min(v2_screenspace.x.min(v3_screenspace.x)).max(0.0) as usize;
+        let iymin = v1_screenspace.y.min(v2_screenspace.y.min(v3_screenspace.y)).max(0.0) as usize;
+        let ixmax = v1_screenspace.x.max(v2_screenspace.x.max(v3_screenspace.x)).min(FWIDTH - 1.0) as usize;
+        let iymax = v1_screenspace.y.max(v2_screenspace.y.max(v3_screenspace.y)).min(FHEIGHT - 1.0) as usize;
 
         for y in iymin..=iymax {
             for x in ixmin..=ixmax {
-                let xu = x as usize;
-                let yu = y as usize;
-
                 let mut p = Vec3f::new(x as f32, y as f32, 0.0);
 
-                let bar = barycenter(sv1, sv2, sv3, p);
+                let bar = barycenter(v1_screenspace, v2_screenspace, v3_screenspace, p);
                 if bar.x < 0_f32 || bar.y < 0_f32 || bar.z < 0_f32 { continue }
 
-                p.z = sv1.z * bar.x + sv2.z * bar.y + sv3.z * bar.z;
-                let mut zb = &mut z_buffer[(yu*WIDTH)+xu];
+                p.z = v1_screenspace.z * bar.x + v2_screenspace.z * bar.y + v3_screenspace.z * bar.z;
+                let mut zb = &mut z_buffer[(y*WIDTH)+x];
 
                 if *zb < p.z { 
                     *zb = p.z;
+
                     let u = bar.x * uv1.x + bar.y * uv2.x + bar.z * uv3.x;
                     let v = bar.x * uv1.y + bar.y * uv2.y + bar.z * uv3.y;
 
-                    // get normal from normal map
-                    let fnwidth  = normal_map.width  as f32;
-                    let fnheight = normal_map.height as f32;
-                    let nu = (u * fnwidth) as usize;
-                    let nv = ((1.0 - v) * (fnheight - 1.0)) as usize; //flipped vertically
+                    let bn = Vec3f::new(bar.x * n1_worldspace.x + bar.y * n2_worldspace.x + bar.z * n3_worldspace.x,
+                                        bar.x * n1_worldspace.y + bar.y * n2_worldspace.y + bar.z * n3_worldspace.y,
+                                        bar.x * n1_worldspace.z + bar.y * n2_worldspace.z + bar.z * n3_worldspace.z,).normalized();
 
-                    let pixel_index = (nv * normal_map.width + nu) * 3;
-                    let nx = f32::from(normal_map.data[pixel_index + 0]) / 255.0; 
-                    let ny = f32::from(normal_map.data[pixel_index + 1]) / 255.0; 
-                    let nz = f32::from(normal_map.data[pixel_index + 2]) / 255.0; 
+                    let intensity = if true {
 
-                    let normal = Vec3f::from(eye_from_object_it * Vec4f::new(nx, ny, nz, 0.0)).normalized();
-                    let intensity = normal.dot(trans_light_dir).max(0.0);
+                        let tan1 = Vec3f::from(mesh.tangents[i1]);
+                        let tan2 = Vec3f::from(mesh.tangents[i2]);
+                        let tan3 = Vec3f::from(mesh.tangents[i3]);
+
+                        let tangent = Vec3f::new( bar.x * tan1.x + bar.y * tan2.x + bar.z * tan3.x,
+                                                  bar.x * tan1.y + bar.y * tan2.y + bar.z * tan3.y,
+                                                  bar.x * tan1.z + bar.y * tan2.z + bar.z * tan3.z,).normalized();
+
+                        let bitangent = bn.cross(tangent);
+
+
+                        let tbn = Mat33::from_col_vec(tangent, bitangent, bn);
+                        let tbn_inv = tbn.transposed();
+
+                        // get normal from normal map
+                        let fnwidth  = tangent_map.width  as f32;
+                        let fnheight = tangent_map.height as f32;
+                        let nu = (u * fnwidth) as usize;
+                        let nv = ((1.0 - v) * fnheight) as usize; //flipped vertically
+
+                        let pixel_index = (nv * tangent_map.width + nu) * tangent_map.depth;
+
+                        let nx = tangent_map.data[pixel_index + 0];
+                        let ny = tangent_map.data[pixel_index + 1];
+                        let nz = tangent_map.data[pixel_index + 2];
+
+                        let nx = (f32::from(nx) / 255.0) * 2.0 - 1.0;
+                        let ny = (f32::from(ny) / 255.0) * 2.0 - 1.0;
+                        let nz = (f32::from(nz) / 255.0) * 2.0 - 1.0;
+
+                        let light_dir_tangentspace = (tbn_inv * light_dir_worldspace).normalized();
+                        Vec3f::new(nx, ny, nz).normalized().dot(light_dir_tangentspace).max(0.0)
+
+                    } else if true {
+
+                        let fnwidth  = normal_map.width  as f32;
+                        let fnheight = normal_map.height as f32;
+                        let nu = (u * fnwidth) as usize;
+                        let nv = ((1.0 - v) * fnheight) as usize; //flipped vertically
+
+                        let pixel_index = (nv * normal_map.width + nu) * normal_map.depth;
+
+                        let nx = normal_map.data[pixel_index + 0];
+                        let ny = normal_map.data[pixel_index + 1];
+                        let nz = normal_map.data[pixel_index + 2];
+
+                        let nx = (f32::from(nx) / 255.0) * 2.0 - 1.0;
+                        let ny = (f32::from(ny) / 255.0) * 2.0 - 1.0;
+                        let nz = (f32::from(nz) / 255.0) * 2.0 - 1.0;
+
+                        Vec3f::new(nx, ny, nz).normalized().dot(light_dir_worldspace).max(0.0)
+                    } else {
+                        bn.dot(light_dir_worldspace).max(0.0)
+                    };
 
                     // get texture pixel color from texture
                     let ftwidth = texture.width as f32;
                     let ftheight = texture.height as f32;
 
                     let tu = (u * ftwidth) as usize;
-                    let tv = ((1.0 - v) * (ftheight - 1.0)) as usize; //flipped vertically
+                    let tv = ((1.0 - v) * ftheight) as usize; //flipped vertically
 
                     let pixel_index = (tv * texture.width + tu) * 3;
                     let r = texture.data[pixel_index + 0]; // RGB
@@ -180,12 +244,12 @@ fn render_mesh(filename: &str, texture_name: &str, normal_map_name: &str, image:
                     let g = (f32::from(g) * intensity) as u8;
                     let b = (f32::from(b) * intensity) as u8;
 
-                    image.set(x as usize, y as usize, ppm::RGB::new(r, g, b));
+                    image.set(x, y, ppm::RGB::new(r, g, b));
                 }
             }
         }
     }
-    
+
     Ok(())
 }
 
@@ -194,7 +258,7 @@ fn main() -> std::io::Result<()> {
     let mut z_buffer: [f32; WIDTH * HEIGHT] = [std::f32::MIN; WIDTH * HEIGHT];
     let mut image = ppm::Image::new(WIDTH, HEIGHT);
 
-    render_mesh("african_head.obj", "african_head_diffuse.tga", "african_head_nm.png", &mut image, &mut z_buffer)?;
+    render_mesh("african_head.obj", "african_head_diffuse.tga", "african_head_nm.tga", "african_head_nm_tangent.tga", &mut image, &mut z_buffer)?;
 
     println!("opening the output");
     let mut output_dir = std::env::current_dir().unwrap();
