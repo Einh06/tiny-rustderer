@@ -10,8 +10,8 @@ use math::{Vec2f, Vec3f, Vec4f, Mat33, Mat44};
 
 use image::LoadResult::{Error, ImageU8, ImageF32};
 
-const WIDTH: usize = 800;
-const HEIGHT: usize = 800;
+const WIDTH: usize = 1024;
+const HEIGHT: usize = 1024;
 const FWIDTH: f32 = WIDTH as f32;
 const FHEIGHT: f32 = HEIGHT as f32;
 
@@ -71,7 +71,7 @@ fn image_get_from_uv(image: &image::Image<u8>, uv: Vec2f) -> (u8, u8, u8) {
     (image.data[pixel_index + 0], image.data[pixel_index + 1], image.data[pixel_index + 2])
 }
 
-fn render_mesh(filename: &str, texture_name: &str, normal_map_name: &str, tangent_map_name: &str, image: &mut ppm::Image, z_buffer: &mut [f32]) -> std::io::Result<()> {
+fn render_mesh(filename: &str, texture_name: &str, normal_map_name: &str, tangent_map_name: &str, specular_map_name: &str, image: &mut ppm::Image, z_buffer: &mut [f32]) -> std::io::Result<()> {
     let mut resource_dir = std::env::current_dir().unwrap();
     resource_dir.push("rsrc");
     
@@ -106,6 +106,18 @@ fn render_mesh(filename: &str, texture_name: &str, normal_map_name: &str, tangen
             ImageF32(_image) => panic!("Wrong image format"),
         };
         image
+    };
+
+    let spec_map = {
+        let mut specular_map_path = resource_dir.clone();
+        specular_map_path.push(specular_map_name);
+        let image = match image::load(specular_map_path.as_path()) {
+            Error(str) => panic!(str),
+            ImageU8(image) => image,
+            ImageF32(_image) => panic!("Wrong image format"),
+        };
+        image
+
     };
 
     let mesh = { 
@@ -175,7 +187,7 @@ fn render_mesh(filename: &str, texture_name: &str, normal_map_name: &str, tangen
                                         bar.x * n1_worldspace.y + bar.y * n2_worldspace.y + bar.z * n3_worldspace.y,
                                         bar.x * n1_worldspace.z + bar.y * n2_worldspace.z + bar.z * n3_worldspace.z,).normalized();
 
-                    let intensity = if true {
+                    let (diffuse, spec) = if true {
 
                         let tan1 = mesh.tangents[i1];
                         let tan2 = mesh.tangents[i2];
@@ -195,9 +207,16 @@ fn render_mesh(filename: &str, texture_name: &str, normal_map_name: &str, tangen
                         let ny = (f32::from(ny) / 255.0) * 2.0 - 1.0;
                         let nz = (f32::from(nz) / 255.0) * 2.0 - 1.0;
 
-                        let light_dir_tangentspace = (tbn_inv * light_dir_worldspace).normalized();
-                        Vec3f::new(nx, ny, nz).normalized().dot(light_dir_tangentspace).max(0.0)
+                        let l_tangentspace = (tbn_inv * light_dir_worldspace).normalized();
+                        let n_tangentspace = Vec3f::new(nx, ny, nz).normalized();
+                        let diffuse = n_tangentspace.dot(l_tangentspace).max(0.0);
 
+                        let reflected_dir = (n_tangentspace * (n_tangentspace.dot(l_tangentspace) * 2.0) - l_tangentspace).normalized();
+
+                        let (spec, _, _) = image_get_from_uv(&spec_map, uv);
+                        let spec = reflected_dir.z.max(0.0).powf(f32::from(spec));
+
+                        (diffuse, spec)
                     } else if true {
 
                         let (nx, ny, nz) = image_get_from_uv(&normal_map, uv);
@@ -205,16 +224,33 @@ fn render_mesh(filename: &str, texture_name: &str, normal_map_name: &str, tangen
                         let ny = (f32::from(ny) / 255.0) * 2.0 - 1.0;
                         let nz = (f32::from(nz) / 255.0) * 2.0 - 1.0;
 
-                        Vec3f::new(nx, ny, nz).normalized().dot(light_dir_worldspace).max(0.0)
+                        let bn = Vec3f::new(nx, ny, nz).normalized();
+                        let diffuse = bn.dot(light_dir_worldspace).max(0.0);
+
+                        let reflected_dir = (bn * (bn.dot(light_dir_worldspace) * 2.0) - light_dir_worldspace).normalized();
+
+                        let (spec, _, _) = image_get_from_uv(&spec_map, uv);
+                        let spec = reflected_dir.z.max(0.0).powf(f32::from(spec));
+
+                        (diffuse, spec)
+
                     } else {
-                        bn.dot(light_dir_worldspace).max(0.0)
+                        let diffuse = bn.dot(light_dir_worldspace).max(0.0);
+
+                        let reflected_dir = (bn * (bn.dot(light_dir_worldspace) * 2.0) - light_dir_worldspace).normalized();
+                        let (spec, _, _) = image_get_from_uv(&spec_map, uv);
+                        let spec = reflected_dir.z.max(0.0).powf(f32::from(spec));
+
+                        (diffuse, spec)
                     };
+
+                    let ambient_color = 5_u8;
 
                     let (r, g, b) = image_get_from_uv(&texture, uv);
 
-                    let r = (f32::from(r) * intensity) as u8;
-                    let g = (f32::from(g) * intensity) as u8;
-                    let b = (f32::from(b) * intensity) as u8;
+                    let r = ambient_color.saturating_add( (f32::from(r) * (diffuse + 0.6 * spec)) as u8);
+                    let g = ambient_color.saturating_add( (f32::from(g) * (diffuse + 0.6 * spec)) as u8);
+                    let b = ambient_color.saturating_add( (f32::from(b) * (diffuse + 0.6 * spec)) as u8);
 
                     image.set(x, y, ppm::RGB::new(r, g, b));
                 }
@@ -230,7 +266,8 @@ fn main() -> std::io::Result<()> {
     let mut z_buffer: [f32; WIDTH * HEIGHT] = [std::f32::MIN; WIDTH * HEIGHT];
     let mut image = ppm::Image::new(WIDTH, HEIGHT);
 
-    render_mesh("african_head.obj", "african_head_diffuse.tga", "african_head_nm.tga", "african_head_nm_tangent.tga", &mut image, &mut z_buffer)?;
+    render_mesh("african_head.obj", "african_head_diffuse.tga", "african_head_nm.tga", "african_head_nm_tangent.tga", "african_head_spec.tga", &mut image, &mut z_buffer)?;
+    // render_mesh("diablo3_pose.obj", "diablo3_pose_diffuse.tga", "diablo3_pose_nm.tga", "diablo3_pose_nm_tangent.tga", &mut image, &mut z_buffer)?;
 
     println!("opening the output");
     let mut output_dir = std::env::current_dir().unwrap();
