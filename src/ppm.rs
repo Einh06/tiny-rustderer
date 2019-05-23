@@ -5,7 +5,6 @@ pub struct RGB {
     pub b: u8,
 }
 
-
 impl RGB {
     pub fn new(r: u8, g: u8, b: u8) -> RGB {
         RGB { r, g, b, }

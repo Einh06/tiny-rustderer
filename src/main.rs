@@ -6,7 +6,7 @@ mod obj;
 use std::fs::{DirBuilder, File};
 use std::io::{Write, Read};
 use stb_image::image;
-use math::{Vec3f, Vec4f, Mat33, Mat44};
+use math::{Vec2f, Vec3f, Vec4f, Mat33, Mat44};
 
 use image::LoadResult::{Error, ImageU8, ImageF32};
 
@@ -14,12 +14,6 @@ const WIDTH: usize = 800;
 const HEIGHT: usize = 800;
 const FWIDTH: f32 = WIDTH as f32;
 const FHEIGHT: f32 = HEIGHT as f32;
-
-impl From<obj::Vec3> for Vec3f {
-    fn from(v: obj::Vec3) -> Vec3f {
-        Vec3f::new(v.x, v.y, v.z)
-    }
-}
 
 #[allow(dead_code)]
 fn line(x0: i32, y0: i32, x1: i32, y1: i32, image: &mut ppm::Image, color: ppm::RGB) {
@@ -66,6 +60,17 @@ fn barycenter(a: Vec3f, b: Vec3f, c: Vec3f, p: Vec3f) -> Vec3f {
     else { Vec3f::new(1_f32 - (u.x+u.y) / u.z, u.y / u.z, u.x / u.z) }
 }
 
+fn image_get_from_uv(image: &image::Image<u8>, uv: Vec2f) -> (u8, u8, u8) {
+    let fnwidth  = image.width  as f32;
+    let fnheight = image.height as f32;
+    let nu = (uv.x * fnwidth) as usize;
+    let nv = ((1.0 - uv.y) * fnheight) as usize; //flipped vertically
+
+    let pixel_index = (nv * image.width + nu) * image.depth;
+
+    (image.data[pixel_index + 0], image.data[pixel_index + 1], image.data[pixel_index + 2])
+}
+
 fn render_mesh(filename: &str, texture_name: &str, normal_map_name: &str, tangent_map_name: &str, image: &mut ppm::Image, z_buffer: &mut [f32]) -> std::io::Result<()> {
     let mut resource_dir = std::env::current_dir().unwrap();
     resource_dir.push("rsrc");
@@ -103,14 +108,18 @@ fn render_mesh(filename: &str, texture_name: &str, normal_map_name: &str, tangen
         image
     };
 
-    resource_dir.push(filename);
-    println!("Opening model file");
-    let mut file = File::open(resource_dir.as_path())?;
-    let mut content = String::new();
-    file.read_to_string(&mut content)?;
+    let mesh = { 
+        resource_dir.push(filename);
 
-    println!("loading mesh content");
-    let mesh = obj::Mesh::load(&content[..]);
+        println!("Opening model file");
+        let mut file = File::open(resource_dir.as_path())?;
+        let mut content = String::new();
+        file.read_to_string(&mut content)?;
+
+        println!("loading mesh content");
+
+        obj::Mesh::load(&content[..])
+    };
 
     let eye     = Vec3f::new(1.0, 1.0, 3.0);
     let center  = Vec3f::new(0.0, 0.0, 0.0);
@@ -124,26 +133,20 @@ fn render_mesh(filename: &str, texture_name: &str, normal_map_name: &str, tangen
 
     let light_dir_worldspace = Vec3f::new(1.0, 1.0, 1.0).normalized();
 
-    for chunk in mesh.faces.chunks(3) {
-        let (i1, t1, n1) = chunk[0];
-        let (i2, t2, n2) = chunk[1];
-        let (i3, t3, n3) = chunk[2];
+    for face in mesh.faces {
+        let (i1, t1, n1) = face[0];
+        let (i2, t2, n2) = face[1];
+        let (i3, t3, n3) = face[2];
 
-        let v1_worldspace = Vec3f::from(mesh.vertices[i1]);
-        let v2_worldspace = Vec3f::from(mesh.vertices[i2]);
-        let v3_worldspace = Vec3f::from(mesh.vertices[i3]);
+        let (v1_worldspace, v2_worldspace, v3_worldspace) = (mesh.vertices[i1], mesh.vertices[i2], mesh.vertices[i3]);
 
         let v1_screenspace = (screen_from_world * Vec4f::from(v1_worldspace)).homogenize();
         let v2_screenspace = (screen_from_world * Vec4f::from(v2_worldspace)).homogenize();
         let v3_screenspace = (screen_from_world * Vec4f::from(v3_worldspace)).homogenize();
 
-        let uv1 = Vec3f::from(mesh.texcoord[t1]);
-        let uv2 = Vec3f::from(mesh.texcoord[t2]);
-        let uv3 = Vec3f::from(mesh.texcoord[t3]);
+        let (uv1, uv2, uv3) = (mesh.texcoord[t1], mesh.texcoord[t2], mesh.texcoord[t3]);
 
-        let n1_worldspace = Vec3f::from(mesh.normals[n1]);
-        let n2_worldspace = Vec3f::from(mesh.normals[n2]);
-        let n3_worldspace = Vec3f::from(mesh.normals[n3]);
+        let (n1_worldspace, n2_worldspace, n3_worldspace) = (mesh.normals[n1], mesh.normals[n2], mesh.normals[n3]);
 
         // bounding box for triangle
         let ixmin = v1_screenspace.x.min(v2_screenspace.x.min(v3_screenspace.x)).max(0.0) as usize;
@@ -166,6 +169,7 @@ fn render_mesh(filename: &str, texture_name: &str, normal_map_name: &str, tangen
 
                     let u = bar.x * uv1.x + bar.y * uv2.x + bar.z * uv3.x;
                     let v = bar.x * uv1.y + bar.y * uv2.y + bar.z * uv3.y;
+                    let uv = Vec2f::new(u, v);
 
                     let bn = Vec3f::new(bar.x * n1_worldspace.x + bar.y * n2_worldspace.x + bar.z * n3_worldspace.x,
                                         bar.x * n1_worldspace.y + bar.y * n2_worldspace.y + bar.z * n3_worldspace.y,
@@ -173,30 +177,19 @@ fn render_mesh(filename: &str, texture_name: &str, normal_map_name: &str, tangen
 
                     let intensity = if true {
 
-                        let tan1 = Vec3f::from(mesh.tangents[i1]);
-                        let tan2 = Vec3f::from(mesh.tangents[i2]);
-                        let tan3 = Vec3f::from(mesh.tangents[i3]);
+                        let tan1 = mesh.tangents[i1];
+                        let tan2 = mesh.tangents[i2];
+                        let tan3 = mesh.tangents[i3];
 
                         let tangent = Vec3f::new( bar.x * tan1.x + bar.y * tan2.x + bar.z * tan3.x,
                                                   bar.x * tan1.y + bar.y * tan2.y + bar.z * tan3.y,
                                                   bar.x * tan1.z + bar.y * tan2.z + bar.z * tan3.z,).normalized();
-
                         let bitangent = bn.cross(tangent);
 
                         let tbn = Mat33::from_col_vec(tangent, bitangent, bn);
                         let tbn_inv = tbn.transposed();
 
-                        // get normal from normal map
-                        let fnwidth  = tangent_map.width  as f32;
-                        let fnheight = tangent_map.height as f32;
-                        let nu = (u * fnwidth) as usize;
-                        let nv = ((1.0 - v) * fnheight) as usize; //flipped vertically
-
-                        let pixel_index = (nv * tangent_map.width + nu) * tangent_map.depth;
-
-                        let nx = tangent_map.data[pixel_index + 0];
-                        let ny = tangent_map.data[pixel_index + 1];
-                        let nz = tangent_map.data[pixel_index + 2];
+                        let (nx, ny, nz) = image_get_from_uv(&tangent_map, uv);
 
                         let nx = (f32::from(nx) / 255.0) * 2.0 - 1.0;
                         let ny = (f32::from(ny) / 255.0) * 2.0 - 1.0;
@@ -207,17 +200,7 @@ fn render_mesh(filename: &str, texture_name: &str, normal_map_name: &str, tangen
 
                     } else if true {
 
-                        let fnwidth  = normal_map.width  as f32;
-                        let fnheight = normal_map.height as f32;
-                        let nu = (u * fnwidth) as usize;
-                        let nv = ((1.0 - v) * fnheight) as usize; //flipped vertically
-
-                        let pixel_index = (nv * normal_map.width + nu) * normal_map.depth;
-
-                        let nx = normal_map.data[pixel_index + 0];
-                        let ny = normal_map.data[pixel_index + 1];
-                        let nz = normal_map.data[pixel_index + 2];
-
+                        let (nx, ny, nz) = image_get_from_uv(&normal_map, uv);
                         let nx = (f32::from(nx) / 255.0) * 2.0 - 1.0;
                         let ny = (f32::from(ny) / 255.0) * 2.0 - 1.0;
                         let nz = (f32::from(nz) / 255.0) * 2.0 - 1.0;
@@ -227,17 +210,7 @@ fn render_mesh(filename: &str, texture_name: &str, normal_map_name: &str, tangen
                         bn.dot(light_dir_worldspace).max(0.0)
                     };
 
-                    // get texture pixel color from texture
-                    let ftwidth = texture.width as f32;
-                    let ftheight = texture.height as f32;
-
-                    let tu = (u * ftwidth) as usize;
-                    let tv = ((1.0 - v) * ftheight) as usize; //flipped vertically
-
-                    let pixel_index = (tv * texture.width + tu) * 3;
-                    let r = texture.data[pixel_index + 0]; // RGB
-                    let g = texture.data[pixel_index + 1]; // RGB
-                    let b = texture.data[pixel_index + 2]; // RGB
+                    let (r, g, b) = image_get_from_uv(&texture, uv);
 
                     let r = (f32::from(r) * intensity) as u8;
                     let g = (f32::from(g) * intensity) as u8;

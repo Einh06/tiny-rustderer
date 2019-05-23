@@ -1,4 +1,4 @@
-use std::ops::{Add, Sub, Mul, Neg, Index, IndexMut};
+use std::ops::{Add, AddAssign, Sub, Mul, Neg, Index, IndexMut};
 
 const EPSILON: f32 = 0.001;
 
@@ -117,6 +117,20 @@ impl Vec3f {
     pub fn normalized(self) -> Vec3f { 
         let inv_len = 1_f32 / self.length();
         Vec3f::new(self.x * inv_len, self.y * inv_len, self.z * inv_len)
+    }
+}
+
+impl Add<Vec3f> for Vec3f {
+    type Output = Vec3f;
+
+    fn add(self, v: Vec3f) -> Vec3f {
+        Vec3f::new(self.x + v.x, self.y + v.y, self.z + self.z)
+    }
+}
+
+impl AddAssign<Vec3f> for Vec3f {
+    fn add_assign(&mut self, v: Vec3f) {
+        *self = Vec3f::new(self.x + v.x, self.y + v.y, self.z + self.z);
     }
 }
 

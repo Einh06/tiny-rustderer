@@ -1,58 +1,28 @@
-#[derive(Clone, Copy)]
-pub struct Vec3 {
-    pub x: f32,
-    pub y: f32,
-    pub z: f32,
+use math::{Vec3f, Vec2f};
+
+pub struct Triangle {
+    pub t: [(usize, usize, usize); 3]
 }
 
-impl Vec3 { 
-    #[allow(dead_code)]
-    fn new(x: f32, y: f32, z: f32) -> Vec3 {
-        Vec3{ x, y, z }
-    }
-
-    fn dot(self, v: Vec3) -> f32 {
-        self.x * v.x + self.y * v.y + self.z * v.z
-    }
-
-    fn length(self) -> f32 {
-        (self.x * self.x + self.y * self.y + self.z * self.z).sqrt()
-    }
-
-    fn normalized(self) -> Vec3{
-        let inv_len = 1.0 / self.length();
-        Vec3::new(self.x *inv_len, self.y * inv_len, self.z * inv_len)
+impl Triangle {
+    fn new(t1: (usize, usize, usize), t2: (usize, usize, usize), t3: (usize, usize, usize)) -> Triangle {
+        Triangle {t: [t1, t2, t3] }
     }
 }
 
-impl std::ops::AddAssign for Vec3 {
-    fn add_assign(&mut self, rhs: Vec3) {
-        *self = Vec3::new(self.x + rhs.x, self.y + rhs.y, self.z + rhs.z)
-    }
-}
-
-impl std::ops::Sub<Vec3> for Vec3 {
-    type Output = Vec3;
-
-    fn sub(self, v: Vec3) -> Vec3 {
-        Vec3::new(self.x - v.x, self.y - v.y, self.z - v.z)
-    }
-}
-
-impl std::ops::Mul<f32> for Vec3 {
-    type Output = Vec3;
-
-    fn mul(self, s: f32) -> Vec3 {
-        Vec3::new(self.x * s, self.y * s, self.z * s)
+impl std::ops::Index<usize> for Triangle {
+    type Output = (usize, usize, usize);
+    fn index(&self, i: usize) -> &(usize, usize, usize) {
+        &self.t[i]
     }
 }
 
 pub struct Mesh {
-    pub vertices: Vec<Vec3>,
-    pub texcoord: Vec<Vec3>,
-    pub normals: Vec<Vec3>,
-    pub tangents: Vec<Vec3>,
-    pub faces: Vec<(usize, usize, usize)>,
+    pub vertices: Vec<Vec3f>,
+    pub texcoord: Vec<Vec2f>,
+    pub normals:  Vec<Vec3f>,
+    pub tangents: Vec<Vec3f>,
+    pub faces:    Vec<Triangle>,
 }
 
 impl Mesh {
@@ -71,31 +41,34 @@ impl Mesh {
                     comp[1].parse::<f32>().unwrap(),
                     comp[2].parse::<f32>().unwrap(),
                     comp[3].parse::<f32>().unwrap());
-                vertices.push(Vec3{x,y,z})
+                vertices.push(Vec3f{x,y,z})
             },
             "vt" => { 
-                let (x, y, z) = (
+                let (x, y) = (
                     comp[2].parse::<f32>().expect("Can't parse texcoord float"),
-                    comp[3].parse::<f32>().expect("Can't parse texcoord float"),
-                    comp[4].parse::<f32>().expect("Can't parse texcoord float"));
-                texcoord.push(Vec3{x,y,z}) 
+                    comp[3].parse::<f32>().expect("Can't parse texcoord float"));
+                texcoord.push(Vec2f{x,y}) 
             },
             "vn" => {
                 let (x, y, z) = (
                     comp[2].parse::<f32>().unwrap(),
                     comp[3].parse::<f32>().unwrap(),
                     comp[4].parse::<f32>().unwrap());
-                normals.push(Vec3{x,y,z})
+                normals.push(Vec3f{x,y,z})
             },
             "f" => {
 
-                let f1:Vec<usize> = comp[1].split('/').map(|s| s.parse::<usize>().unwrap() ).collect();
-                let f2:Vec<usize> = comp[2].split('/').map(|s| s.parse::<usize>().unwrap() ).collect();
-                let f3:Vec<usize> = comp[3].split('/').map(|s| s.parse::<usize>().unwrap() ).collect();
+                let parse_obj_indices = |s: &str| s.parse::<usize>().unwrap() - 1;
 
-                faces.push((f1[0] - 1, f1[1] - 1, f1[2] - 1));
-                faces.push((f2[0] - 1, f2[1] - 1, f2[2] - 1));
-                faces.push((f3[0] - 1, f3[1] - 1, f3[2] - 1));
+                let f1:Vec<usize> = comp[1].split('/').map(parse_obj_indices).collect();
+                let f2:Vec<usize> = comp[2].split('/').map(parse_obj_indices).collect();
+                let f3:Vec<usize> = comp[3].split('/').map(parse_obj_indices).collect();
+
+                let t = Triangle::new((f1[0], f1[1], f1[2]), 
+                                      (f2[0], f2[1], f2[2]), 
+                                      (f3[0], f3[1], f3[2]),);
+
+                faces.push(t);
             },
             _ => continue,
             }
@@ -106,14 +79,17 @@ impl Mesh {
         normals.shrink_to_fit();
         faces.shrink_to_fit();
 
+
+        // Assumes that obj file uses faces
+        // Could be done in 1 pass
         let tangents = {
 
             let mut res = Vec::with_capacity(vertices.len());
-            for _ in 0..vertices.len() { res.push(Vec3::new(0.0, 0.0, 0.0)) }
-            let mut tan: Vec<Vec3> = Vec::with_capacity(vertices.len());
-            for _ in 0..vertices.len() { tan.push(Vec3::new(0.0, 0.0, 0.0)) }
+            for _ in 0..vertices.len() { res.push(Vec3f::new(0.0, 0.0, 0.0)) }
+            let mut tan: Vec<Vec3f> = Vec::with_capacity(vertices.len());
+            for _ in 0..vertices.len() { tan.push(Vec3f::new(0.0, 0.0, 0.0)) }
 
-            for triangle in faces.chunks(3) {
+            for triangle in &faces {
                 let (v1_index, t1_index, _) = triangle[0];
                 let (v2_index, t2_index, _) = triangle[1];
                 let (v3_index, t3_index, _) = triangle[2];
@@ -148,6 +124,7 @@ impl Mesh {
 
                 res[i] = (t - n * n.dot(t)).normalized(); // orthogonalization
             }
+            res.shrink_to_fit();
 
             res
         };
