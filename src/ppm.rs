@@ -7,27 +7,31 @@ pub struct RGB {
 
 impl RGB {
     pub fn new(r: u8, g: u8, b: u8) -> RGB {
-        RGB { r, g, b, }
+        RGB { r, g, b }
     }
 
     pub fn red() -> RGB {
-        RGB { r: 255, g: 0, b: 0, }
+        RGB { r: 255, g: 0, b: 0 }
     }
 
     pub fn green() -> RGB {
-        RGB {r: 0, g: 255, b: 0, }
+        RGB { r: 0, g: 255, b: 0 }
     }
 
     pub fn blue() -> RGB {
-        RGB { r: 0, g: 0, b: 255, }
+        RGB { r: 0, g: 0, b: 255 }
     }
 
     pub fn black() -> RGB {
-        RGB { r: 0, g: 0, b: 0, }
+        RGB { r: 0, g: 0, b: 0 }
     }
 
     pub fn white() -> RGB {
-        RGB { r: 255, g: 255, b: 255, }
+        RGB {
+            r: 255,
+            g: 255,
+            b: 255,
+        }
     }
 }
 
@@ -44,7 +48,11 @@ impl Image {
         for _ in 0..width * height {
             data.push(RGB::black());
         }
-        Image { width, height, data, }
+        Image {
+            width,
+            height,
+            data,
+        }
     }
 
     pub fn set(&mut self, x: usize, y: usize, c: RGB) {
@@ -57,7 +65,7 @@ impl From<&Image> for String {
         let mut buf = String::new();
         buf.push_str(format!("P3\n{} {}\n255\n", image.width, image.height).as_str());
         for color in image.data.iter() {
-            buf.push_str(format!("{} {} {} ",color.r, color.g, color.b).as_str());
+            buf.push_str(format!("{} {} {} ", color.r, color.g, color.b).as_str());
         }
         buf
     }
