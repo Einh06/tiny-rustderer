@@ -33,6 +33,15 @@ impl RGB {
             b: 255,
         }
     }
+
+    pub fn grey(v: f32) -> RGB {
+        let v = (v * 255.0) as u8;
+        RGB {
+            r: v,
+            g: v,
+            b: v,
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -57,6 +66,11 @@ impl Image {
 
     pub fn set(&mut self, x: usize, y: usize, c: RGB) {
         self.data[((self.height - 1) - y) * self.width + x] = c;
+    }
+
+    pub fn get(&self, x: usize, y: usize) -> RGB {
+        println!("x: {}, y: {}", x, y);
+        self.data[((self.height - 1) - y) * self.width + x]
     }
 }
 

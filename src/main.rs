@@ -15,6 +15,8 @@ const HEIGHT: usize = 1024;
 const FWIDTH: f32 = WIDTH as f32;
 const FHEIGHT: f32 = HEIGHT as f32;
 
+const MAX_DEPTH: f32 = 255.0;
+
 #[allow(dead_code)]
 fn line(x0: i32, y0: i32, x1: i32, y1: i32, image: &mut ppm::Image, color: ppm::RGB) {
     let steep = (x0 - x1).abs() < (y0 - y1).abs();
@@ -129,17 +131,18 @@ fn render_mesh(
         obj::Mesh::load(&content[..])
     };
 
-    let eye = Vec3f::new(1.0, 1.0, 3.0);
+    let eye = Vec3f::new(1.0, 1.0, 4.0);
     let center = Vec3f::new(0.0, 0.0, 0.0);
     let up = Vec3f::new(0.0, 1.0, 0.0);
 
-    let screen_from_view = Mat44::viewport( FWIDTH / 8.0, FHEIGHT / 8.0, (FWIDTH * 3.0) / 4.0, (FHEIGHT * 3.0) / 4.0, 255.0, );
-
+    let screen_from_view = Mat44::viewport( FWIDTH / 8.0, FHEIGHT / 8.0, (FWIDTH * 3.0) / 4.0, (FHEIGHT * 3.0) / 4.0, MAX_DEPTH, );
     let light_dir_worldspace = Vec3f::new(1.0, 1.0, 1.0).normalized();
-    let lightspace_from_worldspace = Mat44::lookat(center - light_dir_worldspace, center, up);
-    let lightview_from_lightspace = Mat44::projection(-1.0 / (light_dir_worldspace - center).length());
-    let lightview_from_worldsapce = lightview_from_lightspace * lightspace_from_worldspace;
 
+    let lightspace_from_worldspace = Mat44::lookat(light_dir_worldspace, center, up);
+    let lightview_from_lightspace = Mat44::projection(0.0);
+    let lightscreen_from_worldspace = screen_from_view * lightview_from_lightspace * lightspace_from_worldspace;
+
+    let mut depth_image = ppm::Image::new(image.width, image.height);
     {
         //Shadow Map pass
         for face in &mesh.faces {
@@ -150,39 +153,64 @@ fn render_mesh(
             let (v1_worldspace, v2_worldspace, v3_worldspace) =
                 (mesh.vertices[i1], mesh.vertices[i2], mesh.vertices[i3]);
 
-            let v1_lightspace = (screen_from_view * lightview_from_worldspace * Vec4f::from(v1_worldspace)).homogenize();
-            let v2_lightspace = (screen_from_view * lightview_from_worldspace * Vec4f::from(v2_worldspace)).homogenize();
-            let v3_lightspace = (screen_from_view * lightview_from_worldspace * Vec4f::from(v3_worldspace)).homogenize();
+            let v1_lightscreen = (lightscreen_from_worldspace * Vec4f::from(v1_worldspace)).homogenize();
+            let v2_lightscreen = (lightscreen_from_worldspace * Vec4f::from(v2_worldspace)).homogenize();
+            let v3_lightscreen = (lightscreen_from_worldspace * Vec4f::from(v3_worldspace)).homogenize();
 
-            let xmin = v1_lightspace.x.min(v2_lightspace.x.min(v3_lightspace.x)).max(0.0) as usize;
-            let ymin = v1_lightspace.y.min(v2_lightspace.y.min(v3_lightspace.y)).max(0.0) as usize;
-            let xmax = v1_lightspace.x.max(v2_lightspace.x.max(v3_lightspace.x)).min(FWIDTH - 1.0) as usize;
-            let ymax = v1_lightspace.y.max(v2_lightspace.y.max(v3_lightspace.y)).min(FHEIGHT - 1.0) as usize;
+            let xmin = v1_lightscreen.x.min(v2_lightscreen.x.min(v3_lightscreen.x)).max(0.0) as usize;
+            let ymin = v1_lightscreen.y.min(v2_lightscreen.y.min(v3_lightscreen.y)).max(0.0) as usize;
+            let xmax = v1_lightscreen.x.max(v2_lightscreen.x.max(v3_lightscreen.x)).min(FWIDTH - 1.0) as usize;
+            let ymax = v1_lightscreen.y.max(v2_lightscreen.y.max(v3_lightscreen.y)).min(FHEIGHT - 1.0) as usize;
 
             for y in ymin..=ymax {
                 for x in xmin..=xmax {
                     let mut p = Vec3f::new(x as f32, y as f32, 0.0);
-                    let bar = barycenter(v1_lightspace, v2_lightspace, v3_lightspace, p);
+                    let bar = barycenter(v1_lightscreen, v2_lightscreen, v3_lightscreen, p);
                     if bar.x < 0.0 || bar.y < 0.0 || bar.z < 0.0 {
                         continue;
                     }
 
-                    p.z = bar.x * v1_lightspace.z + bar.y * v2_lightspace.z + bar.z * v3_lightspace.z;
+                    p.z = bar.x * v1_lightscreen.z + bar.y * v2_lightscreen.z + bar.z * v3_lightscreen.z;
                     let mut zb = &mut z_buffer[(y * WIDTH) + x];
                     if *zb < p.z {
                         *zb = p.z;
+
+                        println!("z: {}", p.z);
+
+                        // need to map 
+                        let color = ppm::RGB::grey(p.z);
+                        depth_image.set(x, y, color);
                     }
                 }
             }
         }
     }
 
+    let mut depth_buffer_path = resource_dir.clone();
+    depth_buffer_path.push("depth.ppm");
+
+    let mut depth_file = File::create(depth_buffer_path.as_path())?;
+
+    println!("Writing to depth buffer");
+    depth_file.write_all(String::from(&depth_image).as_bytes())?;
+
+
+    let mut shadow_map = vec![0_f32; depth_image.width * depth_image.height];
+    shadow_map.copy_from_slice(z_buffer);
+
+    for v in &mut z_buffer.into_iter() { *v = std::f32::MIN; }
+
     {
         // Scene render pass
         let camera_from_world = Mat44::lookat(eye, center, up);
         let view_from_camera = Mat44::projection(-1.0 / (eye - center).length());
-        let screen_from_view = Mat44::viewport( FWIDTH / 8.0, FHEIGHT / 8.0, (FWIDTH * 3.0) / 4.0, (FHEIGHT * 3.0) / 4.0, 255.0, );
         let screen_from_world = screen_from_view * view_from_camera * camera_from_world;
+        let screen_from_world_it = screen_from_world.inverse().transposed();
+
+        let normalizing_matrix = Mat44::new(0.5, 0.0, 0.0, 0.5,
+                                            0.0, 0.5, 0.0, 0.5,
+                                            0.0, 0.0, 0.5, 0.5,
+                                            0.0, 0.0, 0.0, 1.0,);
 
         // Model passs
         for face in mesh.faces {
@@ -224,6 +252,24 @@ fn render_mesh(
                     if *zb < p.z {
                         *zb = p.z;
 
+                        let v1_worldspace = (screen_from_world_it * Vec4f::from(v1_screenspace)).homogenize();
+                        let v2_worldspace = (screen_from_world_it * Vec4f::from(v2_screenspace)).homogenize();
+                        let v3_worldspace = (screen_from_world_it * Vec4f::from(v3_screenspace)).homogenize();
+
+                        let pos_worldspace = v1_worldspace * bar.x + v2_worldspace * bar.y + v3_worldspace * bar.z;
+                        let pos_lightspace = lightspace_from_worldspace * Vec4f::from(pos_worldspace);
+                        let pos_lightscreen = (normalizing_matrix * pos_lightspace).homogenize();
+                        let depth_x = (pos_lightscreen.x * (depth_image.width as f32)) as usize;
+                        let depth_y = (pos_lightscreen.y * (depth_image.height as f32)) as usize;
+                        let depth_z = shadow_map[(depth_y * depth_image.width) + depth_x];
+
+                        if pos_lightscreen.z < depth_z {
+                            image.set(x, y, ppm::RGB::red());
+                            continue;
+                        }
+
+                        // If behind something in shadow map, donc calculate light
+
                         let u = bar.x * uv1.x + bar.y * uv2.x + bar.z * uv3.x;
                         let v = bar.x * uv1.y + bar.y * uv2.y + bar.z * uv3.y;
                         let uv = Vec2f::new(u, v);
@@ -232,13 +278,12 @@ fn render_mesh(
                             bar.x * n1_worldspace.x + bar.y * n2_worldspace.x + bar.z * n3_worldspace.x,
                             bar.x * n1_worldspace.y + bar.y * n2_worldspace.y + bar.z * n3_worldspace.y,
                             bar.x * n1_worldspace.z + bar.y * n2_worldspace.z + bar.z * n3_worldspace.z,
-                        )
-                        .normalized();
+                        ).normalized();
 
                         let (diffuse, spec) = if true {
                             let tan1 = mesh.tangents[i1];
                             let tan2 = mesh.tangents[i2];
-                            let tan3 = mesh.tangents[i3];
+                                let tan3 = mesh.tangents[i3];
 
                             let tangent = Vec3f::new(
                                 bar.x * tan1.x + bar.y * tan2.x + bar.z * tan3.x,
@@ -286,25 +331,21 @@ fn render_mesh(
 
                             (diffuse, spec)
                         } else {
-                            let diffuse = bn.dot(light_dir_worldspace).max(0.0);
-
-                            let reflected_dir = (bn * (bn.dot(light_dir_worldspace) * 2.0) - light_dir_worldspace).normalized();
-                            let (spec, _, _) = data_from_uv(&spec_map, uv);
-                            let spec = reflected_dir.z.max(0.0).powf(f32::from(spec));
-
-                            (diffuse, spec)
+                            gouraud_shading(bn, light_dir_worldspace, uv, &spec_map)
                         };
 
                         let ambient_color = 5_u8;
 
                         let (r, g, b) = data_from_uv(&texture, uv);
+                        let (r, g, b) = (
+                            (f32::from(r) * (diffuse + 0.6 * spec)) as u8,
+                            (f32::from(g) * (diffuse + 0.6 * spec)) as u8,
+                            (f32::from(b) * (diffuse + 0.6 * spec)) as u8
+                        );
 
-                        let r = ambient_color
-                            .saturating_add((f32::from(r) * (diffuse + 0.6 * spec)) as u8);
-                        let g = ambient_color
-                            .saturating_add((f32::from(g) * (diffuse + 0.6 * spec)) as u8);
-                        let b = ambient_color
-                            .saturating_add((f32::from(b) * (diffuse + 0.6 * spec)) as u8);
+                        let r = ambient_color.saturating_add(r);
+                        let g = ambient_color.saturating_add(g);
+                        let b = ambient_color.saturating_add(b);
 
                         image.set(x, y, ppm::RGB::new(r, g, b));
                     }
@@ -314,6 +355,16 @@ fn render_mesh(
     }
 
     Ok(())
+}
+
+fn gouraud_shading(bn: Vec3f, light_dir: Vec3f, uv: Vec2f, spec_map: &image::Image<u8>) -> (f32, f32) {
+    let diffuse = bn.dot(light_dir).max(0.0);
+
+    let reflected_dir = (bn * (bn.dot(light_dir) * 2.0) - light_dir).normalized();
+    let (spec, _, _) = data_from_uv(&spec_map, uv);
+    let spec = reflected_dir.z.max(0.0).powf(f32::from(spec));
+
+    (diffuse, spec)
 }
 
 fn main() -> std::io::Result<()> {
