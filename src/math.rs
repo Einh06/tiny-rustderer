@@ -117,6 +117,10 @@ impl Vec3f {
         let inv_len = 1_f32 / self.length();
         Vec3f::new(self.x * inv_len, self.y * inv_len, self.z * inv_len)
     }
+
+    pub fn xy(&self) -> Vec2f {
+        Vec2f {x: self.x, y: self.y}
+    }
 }
 
 impl Add<Vec3f> for Vec3f {
@@ -197,8 +201,15 @@ pub struct Vec4f {
 }
 
 impl Vec4f {
+
+    #[inline(always)]
     pub fn new(x: f32, y: f32, z: f32, w: f32) -> Vec4f {
         Vec4f { x, y, z, w }
+    }
+
+    #[inline(always)]
+    pub fn from_vec3f(v: Vec3f, w: f32) -> Vec4f {
+        Vec4f {x: v.x, y: v.y, z: v.z, w}
     }
 
     #[allow(dead_code)]
@@ -223,9 +234,23 @@ impl Vec4f {
     }
 
     #[inline(always)]
+    pub fn xyz(&self) -> Vec3f {
+        Vec3f { x: self.x, y: self.y, z: self.z}
+    }
+
+    #[inline(always)]
     pub fn homogenize(self) -> Vec3f {
         let inv_w = 1.0 / self.w;
         Vec3f::new(self.x * inv_w, self.y * inv_w, self.z * inv_w)
+    }
+}
+
+impl Add<Vec4f> for Vec4f {
+    type Output = Vec4f;
+
+    #[inline(always)]
+    fn add(self, v: Vec4f) -> Vec4f {
+        Vec4f::new(self.x + v.x, self.y + v.y, self.z + v.z, self.w + v.w)
     }
 }
 
@@ -244,6 +269,15 @@ impl Neg for Vec4f {
     #[inline(always)]
     fn neg(self) -> Vec4f {
         Vec4f::new(-self.x, -self.y, -self.z, -self.w)
+    }
+}
+
+impl Mul<f32> for Vec4f {
+    type Output = Vec4f;
+
+    #[inline(always)]
+    fn mul(self, s: f32) -> Vec4f {
+        Vec4f::new(self.x * s, self.y * s, self.z * s, self.w * s)
     }
 }
 
@@ -460,15 +494,15 @@ impl Mat44 {
         res.m[0][0] = u.x;
         res.m[0][1] = u.y;
         res.m[0][2] = u.z;
-        res.m[0][3] = -u.dot(eye);
+        res.m[0][3] = -center.x;
         res.m[1][0] = v.x;
         res.m[1][1] = v.y;
         res.m[1][2] = v.z;
-        res.m[1][3] = -v.dot(eye);
+        res.m[1][3] = -center.y;
         res.m[2][0] = w.x;
         res.m[2][1] = w.y;
         res.m[2][2] = w.z;
-        res.m[2][3] = -w.dot(eye);
+        res.m[2][3] = -center.z;
 
         res
     }
@@ -478,11 +512,11 @@ impl Mat44 {
 
         m.m[0][3] = x + w / 2.0;
         m.m[1][3] = y + h / 2.0;
-        m.m[2][3] = depth / 255.0;
+        m.m[2][3] = depth / 2.0;
 
         m.m[0][0] = w / 2.0;
         m.m[1][1] = h / 2.0;
-        m.m[2][2] = depth / 255.0;
+        m.m[2][2] = depth / 2.0;
 
         m
     }
