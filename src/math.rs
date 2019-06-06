@@ -127,7 +127,7 @@ impl Add<Vec3f> for Vec3f {
     type Output = Vec3f;
 
     fn add(self, v: Vec3f) -> Vec3f {
-        Vec3f::new(self.x + v.x, self.y + v.y, self.z + self.z)
+        Vec3f::new(self.x + v.x, self.y + v.y, self.z + v.z)
     }
 }
 
