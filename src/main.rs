@@ -185,6 +185,170 @@ impl<'a> Shader for PhongShader<'a> {
     }
 }
 
+struct DepthShader<'a> {
+    trans_matrix: Mat44,
+    mesh: &'a obj::Mesh,
+
+
+    // Vectex Output, Frag intput
+    vertices: [Vec3f; 3],
+}
+
+impl<'a> DepthShader<'a> {
+    fn new(trans_matrix: Mat44, mesh: &'a obj::Mesh) -> DepthShader<'a> {
+        DepthShader {
+            trans_matrix,
+            mesh,
+            vertices: [Vec3f::new(0.0, 0.0, 0.0); 3]
+        }
+    }
+}
+
+impl<'a> Shader for DepthShader<'a> {
+    fn vertex(&mut self, face_index: usize) -> (Vec4f, Vec4f, Vec4f) {
+
+        let face = &self.mesh.faces[face_index];
+        let (v1, _, _) = face[0];
+        let (v2, _, _) = face[1];
+        let (v3, _, _) = face[2];
+
+
+        let v1_transformed = self.trans_matrix * Vec4f::from_vec3f(self.mesh.vertices[v1], 1.0);
+        let v2_transformed = self.trans_matrix * Vec4f::from_vec3f(self.mesh.vertices[v2], 1.0);
+        let v3_transformed = self.trans_matrix * Vec4f::from_vec3f(self.mesh.vertices[v3], 1.0);
+        self.vertices = [v1_transformed.homogenize(), v2_transformed.homogenize(), v3_transformed.homogenize()];
+
+        (
+            v1_transformed,
+            v2_transformed,
+            v3_transformed,
+        )
+    }
+
+    fn fragment(&self, bar: Vec3f) -> (u8, u8, u8) {
+
+        let v = self.vertices[0] * bar.x + self.vertices[1] * bar.y + self.vertices[2] * bar.z;
+
+        let s = v.z / MAX_DEPTH;
+        let c = (255.0 * s) as u8;
+        (c, c, c) 
+    }
+}
+
+struct PhongDShader<'a> {
+    // Input to graphic pipeline
+    light_dir: Vec3f,
+    texture_map: &'a image::Image<u8>,
+    spec_map: &'a image::Image<u8>,
+    tangent_map: &'a image::Image<u8>,
+    depth_map: &'a [f32],
+    mesh: &'a obj::Mesh,
+
+    trans_matrix: Mat44,
+    trans_matrix_inv: Mat44,
+    light_trans: Mat44,
+
+
+    // Output from Vertex for frag
+    normals: [Vec3f; 3],
+    tangents: [Vec3f; 3],
+    uvs: [Vec2f; 3],
+    vertices: [Vec4f; 3],
+}
+
+impl<'a> PhongDShader<'a> {
+    fn new(light_dir: Vec3f, trans_matrix: Mat44, trans_matrix_inv: Mat44, light_trans: Mat44, mesh: &'a obj::Mesh, texture_map: &'a image::Image<u8>, spec_map: &'a image::Image<u8>, tangent_map: &'a image::Image<u8>, depth_map: &'a [f32]) -> PhongDShader<'a> {
+        PhongDShader { 
+            light_dir,
+            trans_matrix,
+            trans_matrix_inv,
+            light_trans,
+            mesh, 
+            texture_map, 
+            spec_map,   
+            tangent_map,
+            depth_map,
+
+            uvs: [Vec2f::new(0.0, 0.0); 3], 
+            normals: [Vec3f::new(0.0, 0.0, 0.0); 3],
+            tangents: [Vec3f::new(0.0, 0.0, 0.0); 3],
+            vertices: [Vec4f::new(0.0, 0.0, 0.0, 0.0); 3],
+        }
+    }
+}
+
+impl<'a> Shader for PhongDShader<'a> {
+
+    fn vertex(&mut self, face_index: usize) -> (Vec4f, Vec4f, Vec4f) {
+        let face = &self.mesh.faces[face_index];
+        let (v1, t1, n1) = face[0];
+        let (v2, t2, n2) = face[1];
+        let (v3, t3, n3) = face[2];
+
+        let v1_transformed = self.trans_matrix * Vec4f::from_vec3f(self.mesh.vertices[v1], 1.0);
+        let v2_transformed = self.trans_matrix * Vec4f::from_vec3f(self.mesh.vertices[v2], 1.0);
+        let v3_transformed = self.trans_matrix * Vec4f::from_vec3f(self.mesh.vertices[v3], 1.0);
+
+        self.normals    = [self.mesh.normals[n1], self.mesh.normals[n2], self.mesh.normals[n3]];
+        self.uvs        = [self.mesh.texcoord[t1], self.mesh.texcoord[t2], self.mesh.texcoord[t3]];
+        self.tangents   = [self.mesh.tangents[v1], self.mesh.tangents[v2], self.mesh.tangents[v3]];
+        self.vertices   = [v1_transformed, v2_transformed, v3_transformed];                        
+
+        (
+            v1_transformed,
+            v2_transformed,
+            v3_transformed,
+        )
+    }
+
+    fn fragment(&self, bar: Vec3f) -> (u8, u8, u8) {
+
+        let pos = self.vertices[0] * bar.x + self.vertices[1] * bar.y + self.vertices[2] * bar.z;
+        let pos_lightport = (self.light_trans * self.trans_matrix_inv * pos).homogenize();
+
+        let depth_map_x = pos_lightport.x as usize;
+        let depth_map_y = (pos_lightport.y * FWIDTH) as usize;
+        let depth_map_z = self.depth_map[depth_map_y + depth_map_x];
+
+        let shadow = if depth_map_z < pos_lightport.z + 40.0 {
+            1.0
+        } else {
+            0.3
+        };
+
+        let uv = self.uvs[0] * bar.x + self.uvs[1] * bar.y + self.uvs[2] * bar.z;
+
+        let bn = (self.normals[0] * bar.x + self.normals[1] * bar.y + self.normals[2] * bar.z).normalized();
+        let tangent = (self.tangents[0] * bar.x + self.tangents[1] * bar.y + self.tangents[2] * bar.z).normalized();
+        let bitangent = bn.cross(tangent).normalized();
+            
+        let tbn = Mat33::from_col_vec(tangent, bitangent, bn);
+        let tbn_inv = tbn.transposed();
+
+        let (nx, ny, nz) = texture(self.tangent_map, uv);
+        let get_normal_value = |c| {f32::from(c) / 255.0 * 2.0 - 1.0};
+
+        let bn = Vec3f::new(get_normal_value(nx), get_normal_value(ny), get_normal_value(nz));
+        let light_dir_tangentspace = tbn_inv * self.light_dir;
+
+        let diffuse = bn.dot(light_dir_tangentspace).max(0.0);
+
+        let reflected_dir = (bn * (bn.dot(light_dir_tangentspace) * 2.0) - light_dir_tangentspace).normalized();
+        let (spec, _, _) = texture(self.spec_map, uv);
+        let spec = reflected_dir.z.max(0.0).powf(f32::from(spec));
+
+        let (r, g, b) = texture(self.texture_map, uv);
+        let (r, g, b) = (f32::from(r), f32::from(g), f32::from(b));
+
+        let light_calc = |c: f32| -> u8 {
+            (c * shadow * (diffuse + 0.6 * spec)) as u8
+        };
+
+        (light_calc(r), light_calc(g), light_calc(b))
+    }
+}
+
+
 
 fn render_mesh_shader(mesh: &obj::Mesh, shader: &mut Shader, z_buffer: &mut Vec<f32>, image: &mut ppm::Image) {
 
@@ -266,7 +430,7 @@ fn render_scene(
     let eye = Vec3f::new(1.0, 1.0, 4.0);
     let center = Vec3f::new(0.0, 0.0, 0.0);
     let up = Vec3f::new(0.0, 1.0, 0.0);
-    let light_dir_worldspace = Vec3f::new(1.0, 1.0, 1.0).normalized();
+    let light_dir_worldspace = Vec3f::new(1.0, 1.0, 0.0).normalized();
 
     let camera_from_world = Mat44::lookat(eye, center, up);
     let view_from_camera = Mat44::projection(-1.0 / (eye - center).length());
@@ -274,9 +438,21 @@ fn render_scene(
 
     let screen_from_world = screen_from_view * view_from_camera * camera_from_world;
 
-    let mut phong_shader = PhongShader::new(light_dir_worldspace, screen_from_world, &mesh, &texture_map, &spec_map, &tangent_map);
 
-    render_mesh_shader(&mesh, &mut phong_shader, &mut z_buffer, image);
+    let lightcamera_from_world = Mat44::lookat(light_dir_worldspace, center, up);
+    let lightview_from_lightcamera = Mat44::projection(0.0);
+    let lightport_from_lightview = screen_from_view;
+
+    let mut depth_shader = DepthShader::new(lightport_from_lightview * lightview_from_lightcamera * lightcamera_from_world, &mesh);
+
+    render_mesh_shader(&mesh, &mut depth_shader, &mut z_buffer, image);
+
+    let depth_map = z_buffer.clone();
+
+    let mut z_buffer = vec![std::f32::MIN; image.width * image.height];
+    let mut phongd_shader = PhongDShader::new(light_dir_worldspace, screen_from_world, screen_from_world.inverse(), lightport_from_lightview, &mesh, &texture_map, &spec_map, &tangent_map, &depth_map);
+    render_mesh_shader(&mesh, &mut phongd_shader, &mut z_buffer, image);
+
 
     Ok(())
 }
